@@ -1777,6 +1777,25 @@ array_transpose(PyArrayObject *self, PyObject *args)
     return ret;
 }
 
+/* Return typenumber from dtype2 unless it is NULL, then return
+   NPY_DOUBLE if dtype1->type_num is integer or bool
+   and dtype1->type_num otherwise.
+*/
+static int
+_get_type_num_double(PyArray_Descr *dtype1, PyArray_Descr *dtype2)
+{
+    if (dtype2 != NULL) {
+        return dtype2->type_num;
+    }
+    /* For integer or bool data-types */
+    if (dtype1->type_num < NPY_FLOAT) {
+        return NPY_DOUBLE;
+    }
+    else {
+        return dtype1->type_num;
+    }
+}
+
 #define _CHKTYPENUM(typ) ((typ) ? (typ)->type_num : PyArray_NOTYPE)
 
 static PyObject *

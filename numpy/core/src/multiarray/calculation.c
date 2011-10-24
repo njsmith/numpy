@@ -268,7 +268,7 @@ PyArray_Max(PyArrayObject *ap, int axis, PyArrayObject *out)
     PyArrayObject *arr;
     PyObject *ret;
 
-    arr = (PyArrayObject *)PyArray_CheckAxis(ap, &axis, NPY_ARRAY_ALLOWNA);
+    arr = (PyArrayObject *)PyArray_CheckAxis(ap, &axis, 0);
     if (arr == NULL) {
         return NULL;
     }

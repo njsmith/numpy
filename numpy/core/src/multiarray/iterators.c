@@ -21,6 +21,9 @@
 #define RubberIndex -2
 #define SingleIndex -3
 
+static int
+slice_coerce_index(PyObject *o, npy_intp *v);
+
 NPY_NO_EXPORT npy_intp
 parse_subindex(PyObject *op, npy_intp *step_size,
                     npy_intp *n_steps, npy_intp max)
@@ -28,16 +31,8 @@ parse_subindex(PyObject *op, npy_intp *step_size,
     npy_intp index;
 
     if (op == Py_None) {
-<<<<<<< variant A
-        *n_steps = NEWAXIS_INDEX;
-        i = 0;
->>>>>>> variant B
         *n_steps = PseudoIndex;
         index = 0;
-####### Ancestor
-        *n_steps = NEWAXIS_INDEX;
-        index = 0;
-======= end
     }
     else if (op == Py_Ellipsis) {
         *n_steps = RubberIndex;

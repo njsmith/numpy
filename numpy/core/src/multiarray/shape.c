@@ -778,8 +778,8 @@ PyArray_Transpose(PyArrayObject *ap, PyArray_Dims *permute)
  */
 int _npy_stride_sort_item_comparator(const void *a, const void *b)
 {
-    npy_intp astride = ((const npy_stride_sort_item *)a)->stride,
-            bstride = ((const npy_stride_sort_item *)b)->stride;
+    npy_intp astride = ((const _npy_stride_sort_item *)a)->stride,
+            bstride = ((const _npy_stride_sort_item *)b)->stride;
 
     /* Sort the absolute value of the strides */
     if (astride < 0) {
@@ -797,8 +797,8 @@ int _npy_stride_sort_item_comparator(const void *a, const void *b)
          * Make the qsort stable by next comparing the perm order.
          * (Note that two perm entries will never be equal)
          */
-        npy_intp aperm = ((const npy_stride_sort_item *)a)->perm,
-                bperm = ((const npy_stride_sort_item *)b)->perm;
+        npy_intp aperm = ((const _npy_stride_sort_item *)a)->perm,
+                bperm = ((const _npy_stride_sort_item *)b)->perm;
         return (aperm < bperm) ? -1 : 1;
     }
     else {

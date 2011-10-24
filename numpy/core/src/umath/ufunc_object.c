@@ -3999,7 +3999,7 @@ PyUFunc_FromFuncAndDataAndSignature(PyUFuncGenericFunction *func, void **data,
     else {
         self->name = name;
     }
-    ufunc->doc = doc;
+    self->doc = doc;
 
     /* generalized ufunc */
     self->core_enabled = 0;

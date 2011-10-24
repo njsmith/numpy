@@ -241,26 +241,6 @@ _array_find_type(PyObject *op, PyArray_Descr *minitype, int max)
                 return NULL;
             }
         }
-<<<<<<< variant A
-        return 0;
-    }
-
-    /* Recursive case */
-    size = PySequence_Size(obj);
-    if (size < 0) {
-        goto fail;
-    }
-    /* Recursive call for each sequence item */
-    for (i = 0; i < size; ++i) {
-        ip = PySequence_GetItem(obj, i);
-        if (ip==NULL) {
-            goto fail;
-        }
-        if (PyArray_DTypeFromObject(ip, maxdims - 1,
-                            out_contains_na, out_dtype) < 0) {
-            Py_DECREF(ip);
-            goto fail;
->>>>>>> variant B
         while (--l >= 0) {
             PyArray_Descr *newtype;
             ip = PySequence_GetItem(op, l);
@@ -283,25 +263,6 @@ _array_find_type(PyObject *op, PyArray_Descr *minitype, int max)
                 Py_DECREF(chktype);
             }
             Py_DECREF(ip);
-####### Ancestor
-        return 0;
-    }
-
-    /* Recursive case */
-    size = PySequence_Size(obj);
-    if (size < 0) {
-        goto fail;
-    }
-    /* Recursive call for each sequence item */
-    for (i = 0; i < size; ++i) {
-        ip = PySequence_GetItem(obj, i);
-        if (ip==NULL) {
-            goto fail;
-        }
-        if (PyArray_DTypeFromObject(ip, maxdims - 1,
-                            out_contains_na, out_dtype) < 0) {
-            goto fail;
-======= end
         }
         chktype = minitype;
         minitype = NULL;
