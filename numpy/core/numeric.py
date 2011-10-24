@@ -1,11 +1,11 @@
 __all__ = ['newaxis', 'ndarray', 'flatiter', 'nditer', 'nested_iters', 'ufunc',
-           'arange', 'array', 'zeros', 'count_nonzero', 'count_reduce_items',
-           'empty', 'broadcast', 'dtype', 'fromstring', 'fromfile',
-           'frombuffer', 'int_asbuffer', 'where', 'argwhere', 'copyto',
+           'arange', 'array', 'zeros', 'count_nonzero', 'empty', 'broadcast',
+           'dtype', 'fromstring', 'fromfile', 'frombuffer',
+           'int_asbuffer', 'where', 'argwhere', 'copyto',
            'concatenate', 'fastCopyAndTranspose', 'lexsort', 'set_numeric_ops',
            'can_cast', 'promote_types', 'min_scalar_type', 'result_type',
            'asarray', 'asanyarray', 'ascontiguousarray', 'asfortranarray',
-           'isfortran', 'isna', 'empty_like', 'zeros_like', 'ones_like',
+           'isfortran', 'empty_like', 'zeros_like',
            'correlate', 'convolve', 'inner', 'dot', 'einsum', 'outer', 'vdot',
            'alterdot', 'restoredot', 'roll', 'rollaxis', 'cross', 'tensordot',
            'array2string', 'get_printoptions', 'set_printoptions',
@@ -62,7 +62,8 @@ copyto = multiarray.copyto
 ufunc = type(sin)
 
 
-def zeros_like(a, dtype=None, order='K', subok=True, maskna=False):
+# originally from Fernando Perez's IPython
+def zeros_like(a, dtype=None, order='K', subok=True):
     """
     Return an array of zeros with the same shape and type as a given array.
 
@@ -80,8 +81,6 @@ def zeros_like(a, dtype=None, order='K', subok=True, maskna=False):
         'F' means F-order, 'A' means 'F' if `a` is Fortran contiguous,
         'C' otherwise. 'K' means match the layout of `a` as closely
         as possible.
-    maskna : boolean
-        If this is true, the returned array will have an NA mask.
 
     Returns
     -------
@@ -114,97 +113,11 @@ def zeros_like(a, dtype=None, order='K', subok=True, maskna=False):
     array([ 0.,  0.,  0.])
 
     """
-    res = empty_like(a, dtype=dtype, order=order, subok=subok, maskna=maskna)
+    res = empty_like(a, dtype=dtype, order=order, subok=subok)
     multiarray.copyto(res, 0, casting='unsafe')
     return res
 
-def ones(shape, dtype=None, order='C', maskna=False):
-    """
-    Return a new array of given shape and type, filled with ones.
-
-    Please refer to the documentation for `zeros` for further details.
-
-    See Also
-    --------
-    zeros, ones_like
-
-    Examples
-    --------
-    >>> np.ones(5)
-    array([ 1.,  1.,  1.,  1.,  1.])
-
-    >>> np.ones((5,), dtype=np.int)
-    array([1, 1, 1, 1, 1])
-
-    >>> np.ones((2, 1))
-    array([[ 1.],
-           [ 1.]])
-
-    >>> s = (2,2)
-    >>> np.ones(s)
-    array([[ 1.,  1.],
-           [ 1.,  1.]])
-
-    """
-    a = empty(shape, dtype, order, maskna)
-    multiarray.copyto(a, 1, casting='unsafe')
-    return a
-
-def ones_like(a, dtype=None, order='K', subok=True, maskna=False):
-    """
-    Return an array of ones with the same shape and type as a given array.
-
-    With default parameters, is equivalent to ``a.copy().fill(1)``.
-
-    Parameters
-    ----------
-    a : array_like
-        The shape and data-type of `a` define these same attributes of
-        the returned array.
-    dtype : data-type, optional
-        Overrides the data type of the result.
-    order : {'C', 'F', 'A', or 'K'}, optional
-        Overrides the memory layout of the result. 'C' means C-order,
-        'F' means F-order, 'A' means 'F' if `a` is Fortran contiguous,
-        'C' otherwise. 'K' means match the layout of `a` as closely
-        as possible.
-    maskna : boolean
-        If this is true, the returned array will have an NA mask.
-
-    Returns
-    -------
-    out : ndarray
-        Array of ones with the same shape and type as `a`.
-
-    See Also
-    --------
-    zeros_like : Return an array of zeros with shape and type of input.
-    empty_like : Return an empty array with shape and type of input.
-    zeros : Return a new array setting values to zero.
-    ones : Return a new array setting values to one.
-    empty : Return a new uninitialized array.
-
-    Examples
-    --------
-    >>> x = np.arange(6)
-    >>> x = x.reshape((2, 3))
-    >>> x
-    array([[0, 1, 2],
-           [3, 4, 5]])
-    >>> np.ones_like(x)
-    array([[1, 1, 1],
-           [1, 1, 1]])
-
-    >>> y = np.arange(3, dtype=np.float)
-    >>> y
-    array([ 0.,  1.,  2.])
-    >>> np.ones_like(y)
-    array([ 1.,  1.,  1.])
-
-    """
-    res = empty_like(a, dtype=dtype, order=order, subok=subok, maskna=maskna)
-    multiarray.copyto(res, 1, casting='unsafe')
-    return res
+# end Fernando's utilities
 
 
 def extend_all(module):
@@ -229,7 +142,6 @@ arange = multiarray.arange
 array = multiarray.array
 zeros = multiarray.zeros
 count_nonzero = multiarray.count_nonzero
-count_reduce_items = multiarray.count_reduce_items
 empty = multiarray.empty
 empty_like = multiarray.empty_like
 fromstring = multiarray.fromstring
@@ -252,9 +164,8 @@ lexsort = multiarray.lexsort
 compare_chararrays = multiarray.compare_chararrays
 putmask = multiarray.putmask
 einsum = multiarray.einsum
-isna = multiarray.isna
 
-def asarray(a, dtype=None, order=None, maskna=None, ownmaskna=False):
+def asarray(a, dtype=None, order=None):
     """
     Convert the input to an array.
 
@@ -269,13 +180,6 @@ def asarray(a, dtype=None, order=None, maskna=None, ownmaskna=False):
     order : {'C', 'F'}, optional
         Whether to use row-major ('C') or column-major ('F' for FORTRAN)
         memory representation.  Defaults to 'C'.
-   maskna : bool or None, optional
-        If this is set to True, it forces the array to have an NA mask.
-        If this is set to False, it forces the array to not have an NA
-        mask.
-    ownmaskna : bool, optional
-        If this is set to True, forces the array to have a mask which
-        it owns.
 
     Returns
     -------
@@ -329,10 +233,9 @@ def asarray(a, dtype=None, order=None, maskna=None, ownmaskna=False):
     True
 
     """
-    return array(a, dtype, copy=False, order=order,
-                            maskna=maskna, ownmaskna=ownmaskna)
+    return array(a, dtype, copy=False, order=order)
 
-def asanyarray(a, dtype=None, order=None, maskna=None, ownmaskna=False):
+def asanyarray(a, dtype=None, order=None):
     """
     Convert the input to an ndarray, but pass ndarray subclasses through.
 
@@ -347,13 +250,6 @@ def asanyarray(a, dtype=None, order=None, maskna=None, ownmaskna=False):
     order : {'C', 'F'}, optional
         Whether to use row-major ('C') or column-major ('F') memory
         representation.  Defaults to 'C'.
-   maskna : bool or None, optional
-        If this is set to True, it forces the array to have an NA mask.
-        If this is set to False, it forces the array to not have an NA
-        mask.
-    ownmaskna : bool, optional
-        If this is set to True, forces the array to have a mask which
-        it owns.
 
     Returns
     -------
@@ -389,10 +285,9 @@ def asanyarray(a, dtype=None, order=None, maskna=None, ownmaskna=False):
     True
 
     """
-    return array(a, dtype, copy=False, order=order, subok=True,
-                                maskna=maskna, ownmaskna=ownmaskna)
+    return array(a, dtype, copy=False, order=order, subok=True)
 
-def ascontiguousarray(a, dtype=None, maskna=None, ownmaskna=False):
+def ascontiguousarray(a, dtype=None):
     """
     Return a contiguous array in memory (C order).
 
@@ -402,13 +297,6 @@ def ascontiguousarray(a, dtype=None, maskna=None, ownmaskna=False):
         Input array.
     dtype : str or dtype object, optional
         Data-type of returned array.
-   maskna : bool or None, optional
-        If this is set to True, it forces the array to have an NA mask.
-        If this is set to False, it forces the array to not have an NA
-        mask.
-    ownmaskna : bool, optional
-        If this is set to True, forces the array to have a mask which
-        it owns.
 
     Returns
     -------
@@ -433,10 +321,9 @@ def ascontiguousarray(a, dtype=None, maskna=None, ownmaskna=False):
     True
 
     """
-    return array(a, dtype, copy=False, order='C', ndmin=1,
-                                maskna=maskna, ownmaskna=ownmaskna)
+    return array(a, dtype, copy=False, order='C', ndmin=1)
 
-def asfortranarray(a, dtype=None, maskna=None, ownmaskna=False):
+def asfortranarray(a, dtype=None):
     """
     Return an array laid out in Fortran order in memory.
 
@@ -446,13 +333,6 @@ def asfortranarray(a, dtype=None, maskna=None, ownmaskna=False):
         Input array.
     dtype : str or dtype object, optional
         By default, the data-type is inferred from the input data.
-   maskna : bool or None, optional
-        If this is set to True, it forces the array to have an NA mask.
-        If this is set to False, it forces the array to not have an NA
-        mask.
-    ownmaskna : bool, optional
-        If this is set to True, forces the array to have a mask which
-        it owns.
 
     Returns
     -------
@@ -477,8 +357,7 @@ def asfortranarray(a, dtype=None, maskna=None, ownmaskna=False):
     True
 
     """
-    return array(a, dtype, copy=False, order='F', ndmin=1,
-                                maskna=maskna, ownmaskna=ownmaskna)
+    return array(a, dtype, copy=False, order='F', ndmin=1)
 
 def require(a, dtype=None, requirements=None):
     """
@@ -1445,25 +1324,14 @@ def array_repr(arr, max_line_width=None, precision=None, suppress_small=None):
                            ', ', "array(")
     else: # show zero-length shape unless it is (0,)
         lst = "[], shape=%s" % (repr(arr.shape),)
+    typeless = arr.dtype.type in _typelessdata
 
     if arr.__class__ is not ndarray:
         cName= arr.__class__.__name__
     else:
         cName = "array"
-
-    skipdtype = (arr.dtype.type in _typelessdata) and arr.size > 0
-
-    if arr.flags.maskna:
-        whichna = isna(arr)
-        # If nothing is NA, explicitly signal the NA-mask
-        if not any(whichna):
-            lst += ", maskna=True"
-        # If everything is NA, can't skip the dtype
-        if skipdtype and all(whichna):
-            skipdtype = False
-
-    if skipdtype:
-        return "%s(%s)" % (cName, lst)
+    if typeless and arr.size:
+        return cName + "(%s)" % lst
     else:
         typename = arr.dtype.name
         # Quote typename in the output if it is "complex".
@@ -1925,7 +1793,39 @@ def _maketup(descr, val):
         res = [_maketup(fields[name][0],val) for name in dt.names]
         return tuple(res)
 
-def identity(n, dtype=None, maskna=False):
+def ones(shape, dtype=None, order='C'):
+    """
+    Return a new array of given shape and type, filled with ones.
+
+    Please refer to the documentation for `zeros` for further details.
+
+    See Also
+    --------
+    zeros, ones_like
+
+    Examples
+    --------
+    >>> np.ones(5)
+    array([ 1.,  1.,  1.,  1.,  1.])
+
+    >>> np.ones((5,), dtype=np.int)
+    array([1, 1, 1, 1, 1])
+
+    >>> np.ones((2, 1))
+    array([[ 1.],
+           [ 1.]])
+
+    >>> s = (2,2)
+    >>> np.ones(s)
+    array([[ 1.,  1.],
+           [ 1.,  1.]])
+
+    """
+    a = empty(shape, dtype, order)
+    multiarray.copyto(a, 1, casting='unsafe')
+    return a
+
+def identity(n, dtype=None):
     """
     Return the identity array.
 
@@ -1938,8 +1838,6 @@ def identity(n, dtype=None, maskna=False):
         Number of rows (and columns) in `n` x `n` output.
     dtype : data-type, optional
         Data-type of the output.  Defaults to ``float``.
-    maskna : bool, optional
-        If this is true, the returned array will have an NA mask.
 
     Returns
     -------
@@ -1955,8 +1853,8 @@ def identity(n, dtype=None, maskna=False):
            [ 0.,  0.,  1.]])
 
     """
-    a = zeros((n,n), dtype=dtype, maskna=maskna)
-    a.diagonal()[...] = 1
+    a = zeros((n,n), dtype=dtype)
+    a.flat[::n+1] = 1
     return a
 
 def allclose(a, b, rtol=1.e-5, atol=1.e-8):
@@ -2063,7 +1961,7 @@ def array_equal(a1, a2):
         return False
     if a1.shape != a2.shape:
         return False
-    return bool(equal(a1,a2).all())
+    return bool(logical_and.reduce(equal(a1,a2).ravel()))
 
 def array_equiv(a1, a2):
     """
@@ -2105,7 +2003,7 @@ def array_equiv(a1, a2):
     except:
         return False
     try:
-        return bool(equal(a1,a2).all())
+        return bool(logical_and.reduce(equal(a1,a2).ravel()))
     except ValueError:
         return False
 

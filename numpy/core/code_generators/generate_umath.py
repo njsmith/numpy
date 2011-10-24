@@ -11,7 +11,6 @@ sys.path.pop(0)
 Zero = "PyUFunc_Zero"
 One = "PyUFunc_One"
 None_ = "PyUFunc_None"
-ReorderableNone = "PyUFunc_ReorderableNone"
 
 # Sentinel value to specify using the full type description in the
 # function name
@@ -238,7 +237,7 @@ defdict = {
 'add' :
     Ufunc(2, 1, Zero,
           docstrings.get('numpy.core.umath.add'),
-          'PyUFunc_AdditionTypeResolver',
+          'PyUFunc_AdditionTypeResolution',
           TD(notimes_or_obj),
           [TypeDescription('M', FullTypeDescr, 'Mm', 'M'),
            TypeDescription('m', FullTypeDescr, 'mm', 'm'),
@@ -247,9 +246,9 @@ defdict = {
           TD(O, f='PyNumber_Add'),
           ),
 'subtract' :
-    Ufunc(2, 1, None, # Zero is only a unit to the right, not the left
+    Ufunc(2, 1, Zero,
           docstrings.get('numpy.core.umath.subtract'),
-          'PyUFunc_SubtractionTypeResolver',
+          'PyUFunc_SubtractionTypeResolution',
           TD(notimes_or_obj),
           [TypeDescription('M', FullTypeDescr, 'Mm', 'M'),
            TypeDescription('m', FullTypeDescr, 'mm', 'm'),
@@ -260,7 +259,7 @@ defdict = {
 'multiply' :
     Ufunc(2, 1, One,
           docstrings.get('numpy.core.umath.multiply'),
-          'PyUFunc_MultiplicationTypeResolver',
+          'PyUFunc_MultiplicationTypeResolution',
           TD(notimes_or_obj),
           [TypeDescription('m', FullTypeDescr, 'mq', 'm'),
            TypeDescription('m', FullTypeDescr, 'qm', 'm'),
@@ -270,9 +269,9 @@ defdict = {
           TD(O, f='PyNumber_Multiply'),
           ),
 'divide' :
-    Ufunc(2, 1, None, # One is only a unit to the right, not the left
+    Ufunc(2, 1, One,
           docstrings.get('numpy.core.umath.divide'),
-          'PyUFunc_DivisionTypeResolver',
+          'PyUFunc_DivisionTypeResolution',
           TD(intfltcmplx),
           [TypeDescription('m', FullTypeDescr, 'mq', 'm'),
            TypeDescription('m', FullTypeDescr, 'md', 'm'),
@@ -281,9 +280,9 @@ defdict = {
           TD(O, f='PyNumber_Divide'),
           ),
 'floor_divide' :
-    Ufunc(2, 1, None, # One is only a unit to the right, not the left
+    Ufunc(2, 1, One,
           docstrings.get('numpy.core.umath.floor_divide'),
-          'PyUFunc_DivisionTypeResolver',
+          'PyUFunc_DivisionTypeResolution',
           TD(intfltcmplx),
           [TypeDescription('m', FullTypeDescr, 'mq', 'm'),
            TypeDescription('m', FullTypeDescr, 'md', 'm'),
@@ -292,9 +291,9 @@ defdict = {
           TD(O, f='PyNumber_FloorDivide'),
           ),
 'true_divide' :
-    Ufunc(2, 1, None, # One is only a unit to the right, not the left
+    Ufunc(2, 1, One,
           docstrings.get('numpy.core.umath.true_divide'),
-          'PyUFunc_DivisionTypeResolver',
+          'PyUFunc_DivisionTypeResolution',
           TD('bBhH', out='d'),
           TD('iIlLqQ', out='d'),
           TD(flts+cmplx),
@@ -312,7 +311,7 @@ defdict = {
           TD(P, f='conjugate'),
           ),
 'fmod' :
-    Ufunc(2, 1, None,
+    Ufunc(2, 1, Zero,
           docstrings.get('numpy.core.umath.fmod'),
           None,
           TD(ints),
@@ -333,17 +332,15 @@ defdict = {
           TD(ints+inexact),
           TD(O, f='Py_reciprocal'),
           ),
-# This is no longer used as numpy.ones_like, however it is
-# still used by some internal calls.
-'_ones_like' :
+'ones_like' :
     Ufunc(1, 1, None,
-          docstrings.get('numpy.core.umath._ones_like'),
-          'PyUFunc_OnesLikeTypeResolver',
+          docstrings.get('numpy.core.umath.ones_like'),
+          'PyUFunc_OnesLikeTypeResolution',
           TD(noobj),
           TD(O, f='Py_get_one'),
           ),
 'power' :
-    Ufunc(2, 1, None,
+    Ufunc(2, 1, One,
           docstrings.get('numpy.core.umath.power'),
           None,
           TD(ints),
@@ -353,7 +350,7 @@ defdict = {
 'absolute' :
     Ufunc(1, 1, None,
           docstrings.get('numpy.core.umath.absolute'),
-          'PyUFunc_AbsoluteTypeResolver',
+          'PyUFunc_AbsoluteTypeResolution',
           TD(bints+flts+timedeltaonly),
           TD(cmplx, out=('f', 'd', 'g')),
           TD(O, f='PyNumber_Absolute'),
@@ -367,7 +364,7 @@ defdict = {
 'negative' :
     Ufunc(1, 1, None,
           docstrings.get('numpy.core.umath.negative'),
-          'PyUFunc_SimpleUnaryOperationTypeResolver',
+          'PyUFunc_SimpleUnaryOperationTypeResolution',
           TD(bints+flts+timedeltaonly),
           TD(cmplx, f='neg'),
           TD(O, f='PyNumber_Negative'),
@@ -375,13 +372,13 @@ defdict = {
 'sign' :
     Ufunc(1, 1, None,
           docstrings.get('numpy.core.umath.sign'),
-          'PyUFunc_SimpleUnaryOperationTypeResolver',
+          'PyUFunc_SimpleUnaryOperationTypeResolution',
           TD(nobool_or_datetime),
           ),
 'greater' :
     Ufunc(2, 1, None,
           docstrings.get('numpy.core.umath.greater'),
-          'PyUFunc_SimpleBinaryComparisonTypeResolver',
+          'PyUFunc_SimpleBinaryComparisonTypeResolution',
           TD(all, out='?'),
           ),
 'greater_equal' :
@@ -393,80 +390,80 @@ defdict = {
 'less' :
     Ufunc(2, 1, None,
           docstrings.get('numpy.core.umath.less'),
-          'PyUFunc_SimpleBinaryComparisonTypeResolver',
+          'PyUFunc_SimpleBinaryComparisonTypeResolution',
           TD(all, out='?'),
           ),
 'less_equal' :
     Ufunc(2, 1, None,
           docstrings.get('numpy.core.umath.less_equal'),
-          'PyUFunc_SimpleBinaryComparisonTypeResolver',
+          'PyUFunc_SimpleBinaryComparisonTypeResolution',
           TD(all, out='?'),
           ),
 'equal' :
     Ufunc(2, 1, None,
           docstrings.get('numpy.core.umath.equal'),
-          'PyUFunc_SimpleBinaryComparisonTypeResolver',
+          'PyUFunc_SimpleBinaryComparisonTypeResolution',
           TD(all, out='?'),
           ),
 'not_equal' :
     Ufunc(2, 1, None,
           docstrings.get('numpy.core.umath.not_equal'),
-          'PyUFunc_SimpleBinaryComparisonTypeResolver',
+          'PyUFunc_SimpleBinaryComparisonTypeResolution',
           TD(all, out='?'),
           ),
 'logical_and' :
     Ufunc(2, 1, One,
           docstrings.get('numpy.core.umath.logical_and'),
-          'PyUFunc_SimpleBinaryComparisonTypeResolver',
+          'PyUFunc_SimpleBinaryComparisonTypeResolution',
           TD(nodatetime_or_obj, out='?'),
-          TD(O, f='npy_ObjectLogicalAnd'),
+          TD(P, f='logical_and'),
           ),
 'logical_not' :
     Ufunc(1, 1, None,
           docstrings.get('numpy.core.umath.logical_not'),
           None,
           TD(nodatetime_or_obj, out='?'),
-          TD(O, f='npy_ObjectLogicalNot'),
+          TD(P, f='logical_not'),
           ),
 'logical_or' :
     Ufunc(2, 1, Zero,
           docstrings.get('numpy.core.umath.logical_or'),
-          'PyUFunc_SimpleBinaryComparisonTypeResolver',
+          'PyUFunc_SimpleBinaryComparisonTypeResolution',
           TD(nodatetime_or_obj, out='?'),
-          TD(O, f='npy_ObjectLogicalOr'),
+          TD(P, f='logical_or'),
           ),
 'logical_xor' :
     Ufunc(2, 1, None,
           docstrings.get('numpy.core.umath.logical_xor'),
-          'PyUFunc_SimpleBinaryComparisonTypeResolver',
+          'PyUFunc_SimpleBinaryComparisonTypeResolution',
           TD(nodatetime_or_obj, out='?'),
           TD(P, f='logical_xor'),
           ),
 'maximum' :
-    Ufunc(2, 1, ReorderableNone,
+    Ufunc(2, 1, None,
           docstrings.get('numpy.core.umath.maximum'),
-          'PyUFunc_SimpleBinaryOperationTypeResolver',
+          'PyUFunc_SimpleBinaryOperationTypeResolution',
           TD(noobj),
           TD(O, f='npy_ObjectMax')
           ),
 'minimum' :
-    Ufunc(2, 1, ReorderableNone,
+    Ufunc(2, 1, None,
           docstrings.get('numpy.core.umath.minimum'),
-          'PyUFunc_SimpleBinaryOperationTypeResolver',
+          'PyUFunc_SimpleBinaryOperationTypeResolution',
           TD(noobj),
           TD(O, f='npy_ObjectMin')
           ),
 'fmax' :
-    Ufunc(2, 1, ReorderableNone,
+    Ufunc(2, 1, None,
           docstrings.get('numpy.core.umath.fmax'),
-          'PyUFunc_SimpleBinaryOperationTypeResolver',
+          'PyUFunc_SimpleBinaryOperationTypeResolution',
           TD(noobj),
           TD(O, f='npy_ObjectMax')
           ),
 'fmin' :
-    Ufunc(2, 1, ReorderableNone,
+    Ufunc(2, 1, None,
           docstrings.get('numpy.core.umath.fmin'),
-          'PyUFunc_SimpleBinaryOperationTypeResolver',
+          'PyUFunc_SimpleBinaryOperationTypeResolution',
           TD(noobj),
           TD(O, f='npy_ObjectMin')
           ),
@@ -930,7 +927,7 @@ r"""f = PyUFunc_FromFuncAndData(%s_functions, %s_data, %s_signatures, %d,
                                                 name, docstring))
         if uf.typereso != None:
             mlist.append(
-                r"((PyUFuncObject *)f)->type_resolver = &%s;" %
+                r"((PyUFuncObject *)f)->type_resolution_function = &%s;" %
                                                                 uf.typereso)
         mlist.append(r"""PyDict_SetItemString(dictionary, "%s", f);""" % name)
         mlist.append(r"""Py_DECREF(f);""")

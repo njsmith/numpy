@@ -480,7 +480,7 @@ class TestEinSum(TestCase):
 
     def test_einsum_misc(self):
         # This call used to crash because of a bug in
-        # PyArray_AssignZero
+        # PyArray_FillWithZero
         a = np.ones((1,2))
         b = np.ones((2,2,1))
         assert_equal(np.einsum('ij...,j...->i...',a,b), [[[2],[2]]])

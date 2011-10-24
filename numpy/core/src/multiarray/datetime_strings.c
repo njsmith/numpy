@@ -1510,7 +1510,7 @@ array_datetime_as_string(PyObject *NPY_UNUSED(self), PyObject *args,
         }
         Py_DECREF(strobj);
 
-        if (unit != -1 && !can_cast_datetime64_units(meta->base, unit, casting)) {
+        if (!can_cast_datetime64_units(meta->base, unit, casting)) {
             PyErr_Format(PyExc_TypeError, "Cannot create a datetime "
                         "string as units '%s' from a NumPy datetime "
                         "with units '%s' according to the rule %s",

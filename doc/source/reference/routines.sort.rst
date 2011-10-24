@@ -37,4 +37,3 @@ Counting
    :toctree: generated/
 
    count_nonzero
-   count_reduce_items

@@ -52,7 +52,7 @@ PyArray_SetNumericOps(PyObject *dict)
     SET(power);
     SET(square);
     SET(reciprocal);
-    SET(_ones_like);
+    SET(ones_like);
     SET(sqrt);
     SET(negative);
     SET(absolute);
@@ -103,7 +103,7 @@ PyArray_GetNumericOps(void)
     GET(power);
     GET(square);
     GET(reciprocal);
-    GET(_ones_like);
+    GET(ones_like);
     GET(sqrt);
     GET(negative);
     GET(absolute);
@@ -350,7 +350,7 @@ fast_scalar_power(PyArrayObject *a1, PyObject *o2, int inplace)
                 fastop = n_ops.reciprocal;
             }
             else if (exponent ==  0.0) {
-                fastop = n_ops._ones_like;
+                fastop = n_ops.ones_like;
             }
             else if (exponent ==  0.5) {
                 fastop = n_ops.sqrt;

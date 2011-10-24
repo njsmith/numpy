@@ -24,7 +24,6 @@
 #include "methods.h"
 #include "_datetime.h"
 #include "datetime_strings.h"
-#include "na_object.h"
 
 /*
  * Imports the PyDateTime functions so we can create these objects.
@@ -2672,13 +2671,6 @@ convert_pyobject_to_datetime(PyArray_DatetimeMetaData *meta, PyObject *obj,
         *out = NPY_DATETIME_NAT;
         return 0;
     }
-    /* Check for NA */
-    else if (NpyNA_Check(obj) || NpyNA_IsZeroDimArrayNA(obj)) {
-        PyErr_SetString(PyExc_ValueError,
-                    "Cannot assign NA to an array which "
-                    "does not support NAs");
-        return -1;
-    }
     else {
         PyErr_SetString(PyExc_ValueError,
                 "Could not convert object to NumPy datetime");
@@ -2939,13 +2931,6 @@ convert_pyobject_to_timedelta(PyArray_DatetimeMetaData *meta, PyObject *obj,
         }
         *out = NPY_DATETIME_NAT;
         return 0;
-    }
-    /* Check for NA */
-    else if (NpyNA_Check(obj) || NpyNA_IsZeroDimArrayNA(obj)) {
-        PyErr_SetString(PyExc_ValueError,
-                    "Cannot assign NA to an array which "
-                    "does not support NAs");
-        return -1;
     }
     else {
         PyErr_SetString(PyExc_ValueError,

@@ -122,16 +122,19 @@ ensure_dtype_nbo(PyArray_Descr *type)
 /*UFUNC_API
  *
  * This function applies the default type resolution rules
- * for the provided ufunc.
+ * for the provided ufunc, filling out_dtypes, out_innerloop,
+ * and out_innerloopdata.
  *
  * Returns 0 on success, -1 on error.
  */
 NPY_NO_EXPORT int
-PyUFunc_DefaultTypeResolver(PyUFuncObject *ufunc,
+PyUFunc_DefaultTypeResolution(PyUFuncObject *ufunc,
                                 NPY_CASTING casting,
                                 PyArrayObject **operands,
                                 PyObject *type_tup,
-                                PyArray_Descr **out_dtypes)
+                                PyArray_Descr **out_dtypes,
+                                PyUFuncGenericFunction *out_innerloop,
+                                void **out_innerloopdata)
 {
     int i, nop = ufunc->nin + ufunc->nout;
     int retval = 0, any_object = 0;
@@ -148,20 +151,20 @@ PyUFunc_DefaultTypeResolver(PyUFuncObject *ufunc,
     /*
      * Decide the casting rules for inputs and outputs.  We want
      * NPY_SAFE_CASTING or stricter, so that the loop selection code
-     * doesn't choose an integer loop for float inputs, or a float32
-     * loop for float64 inputs.
+     * doesn't choose an integer loop for float inputs, for example.
      */
     input_casting = (casting > NPY_SAFE_CASTING) ? NPY_SAFE_CASTING : casting;
 
     if (type_tup == NULL) {
         /* Find the best ufunc inner loop, and fill in the dtypes */
-        retval = linear_search_type_resolver(ufunc, operands,
+        retval = find_best_ufunc_inner_loop(ufunc, operands,
                         input_casting, casting, any_object,
-                        out_dtypes);
+                        out_dtypes, out_innerloop, out_innerloopdata);
     } else {
         /* Find the specified ufunc inner loop, and fill in the dtypes */
-        retval = type_tuple_type_resolver(ufunc, type_tup,
-                        operands, casting, any_object, out_dtypes);
+        retval = find_specified_ufunc_inner_loop(ufunc, type_tup,
+                        operands, casting, any_object, out_dtypes,
+                        out_innerloop, out_innerloopdata);
     }
 
     return retval;
@@ -173,16 +176,22 @@ PyUFunc_DefaultTypeResolver(PyUFuncObject *ufunc,
  * PyArray_ResultType instead of a linear search to get the best
  * loop.
  *
+ * Note that a simpler linear search through the functions loop
+ * is still done, but switching to a simple array lookup for
+ * built-in types would be better at some point.
+ *
  * Returns 0 on success, -1 on error.
  */
 NPY_NO_EXPORT int
-PyUFunc_SimpleBinaryComparisonTypeResolver(PyUFuncObject *ufunc,
+PyUFunc_SimpleBinaryComparisonTypeResolution(PyUFuncObject *ufunc,
                                 NPY_CASTING casting,
                                 PyArrayObject **operands,
                                 PyObject *type_tup,
-                                PyArray_Descr **out_dtypes)
+                                PyArray_Descr **out_dtypes,
+                                PyUFuncGenericFunction *out_innerloop,
+                                void **out_innerloopdata)
 {
-    int i, type_num1, type_num2;
+    int i, type_num, type_num1, type_num2;
     char *ufunc_name;
 
     ufunc_name = ufunc->name ? ufunc->name : "<unnamed ufunc>";
@@ -203,8 +212,8 @@ PyUFunc_SimpleBinaryComparisonTypeResolver(PyUFuncObject *ufunc,
     type_num2 = PyArray_DESCR(operands[1])->type_num;
     if (type_num1 >= NPY_NTYPES || type_num2 >= NPY_NTYPES ||
             type_num1 == NPY_OBJECT || type_num2 == NPY_OBJECT) {
-        return PyUFunc_DefaultTypeResolver(ufunc, casting, operands,
-                type_tup, out_dtypes);
+        return PyUFunc_DefaultTypeResolution(ufunc, casting, operands,
+                type_tup, out_dtypes, out_innerloop, out_innerloopdata);
     }
 
     if (type_tup == NULL) {
@@ -217,30 +226,24 @@ PyUFunc_SimpleBinaryComparisonTypeResolver(PyUFuncObject *ufunc,
         Py_INCREF(out_dtypes[1]);
     }
     else {
-        PyObject *item;
-        PyArray_Descr *dtype = NULL;
-
         /*
          * If the type tuple isn't a single-element tuple, let the
          * default type resolution handle this one.
          */
         if (!PyTuple_Check(type_tup) || PyTuple_GET_SIZE(type_tup) != 1) {
-            return PyUFunc_DefaultTypeResolver(ufunc, casting,
-                    operands, type_tup, out_dtypes);
+            return PyUFunc_DefaultTypeResolution(ufunc, casting,
+                    operands, type_tup, out_dtypes,
+                    out_innerloop, out_innerloopdata);
         }
 
-        item = PyTuple_GET_ITEM(type_tup, 0);
-
-        if (item == Py_None) {
+        if (!PyArray_DescrCheck(PyTuple_GET_ITEM(type_tup, 0))) {
             PyErr_SetString(PyExc_ValueError,
                     "require data type in the type tuple");
             return -1;
         }
-        else if (!PyArray_DescrConverter(item, &dtype)) {
-            return -1;
-        }
 
-        out_dtypes[0] = ensure_dtype_nbo(dtype);
+        out_dtypes[0] = ensure_dtype_nbo(
+                            (PyArray_Descr *)PyTuple_GET_ITEM(type_tup, 0));
         if (out_dtypes[0] == NULL) {
             return -1;
         }
@@ -267,7 +270,31 @@ PyUFunc_SimpleBinaryComparisonTypeResolver(PyUFuncObject *ufunc,
         return -1;
     }
 
-    return 0;
+    type_num = out_dtypes[0]->type_num;
+
+    /* If we have a built-in type, search in the functions list */
+    if (type_num < NPY_NTYPES) {
+        char *types = ufunc->types;
+        int n = ufunc->ntypes;
+
+        for (i = 0; i < n; ++i) {
+            if (types[3*i] == type_num) {
+                *out_innerloop = ufunc->functions[i];
+                *out_innerloopdata = ufunc->data[i];
+                return 0;
+            }
+        }
+
+        PyErr_Format(PyExc_TypeError,
+                "ufunc '%s' not supported for the input types",
+                ufunc_name);
+        return -1;
+    }
+    else {
+        PyErr_SetString(PyExc_RuntimeError,
+                "user type shouldn't have resulted from type promotion");
+        return -1;
+    }
 }
 
 /*
@@ -282,13 +309,15 @@ PyUFunc_SimpleBinaryComparisonTypeResolver(PyUFuncObject *ufunc,
  * Returns 0 on success, -1 on error.
  */
 NPY_NO_EXPORT int
-PyUFunc_SimpleUnaryOperationTypeResolver(PyUFuncObject *ufunc,
+PyUFunc_SimpleUnaryOperationTypeResolution(PyUFuncObject *ufunc,
                                 NPY_CASTING casting,
                                 PyArrayObject **operands,
                                 PyObject *type_tup,
-                                PyArray_Descr **out_dtypes)
+                                PyArray_Descr **out_dtypes,
+                                PyUFuncGenericFunction *out_innerloop,
+                                void **out_innerloopdata)
 {
-    int i, type_num1;
+    int i, type_num, type_num1;
     char *ufunc_name;
 
     ufunc_name = ufunc->name ? ufunc->name : "<unnamed ufunc>";
@@ -307,8 +336,8 @@ PyUFunc_SimpleUnaryOperationTypeResolver(PyUFuncObject *ufunc,
      */
     type_num1 = PyArray_DESCR(operands[0])->type_num;
     if (type_num1 >= NPY_NTYPES || type_num1 == NPY_OBJECT) {
-        return PyUFunc_DefaultTypeResolver(ufunc, casting, operands,
-                type_tup, out_dtypes);
+        return PyUFunc_DefaultTypeResolution(ufunc, casting, operands,
+                type_tup, out_dtypes, out_innerloop, out_innerloopdata);
     }
 
     if (type_tup == NULL) {
@@ -321,30 +350,24 @@ PyUFunc_SimpleUnaryOperationTypeResolver(PyUFuncObject *ufunc,
         Py_INCREF(out_dtypes[1]);
     }
     else {
-        PyObject *item;
-        PyArray_Descr *dtype = NULL;
-
         /*
          * If the type tuple isn't a single-element tuple, let the
          * default type resolution handle this one.
          */
         if (!PyTuple_Check(type_tup) || PyTuple_GET_SIZE(type_tup) != 1) {
-            return PyUFunc_DefaultTypeResolver(ufunc, casting,
-                    operands, type_tup, out_dtypes);
+            return PyUFunc_DefaultTypeResolution(ufunc, casting,
+                    operands, type_tup, out_dtypes,
+                    out_innerloop, out_innerloopdata);
         }
 
-        item = PyTuple_GET_ITEM(type_tup, 0);
-
-        if (item == Py_None) {
+        if (!PyArray_DescrCheck(PyTuple_GET_ITEM(type_tup, 0))) {
             PyErr_SetString(PyExc_ValueError,
                     "require data type in the type tuple");
             return -1;
         }
-        else if (!PyArray_DescrConverter(item, &dtype)) {
-            return -1;
-        }
 
-        out_dtypes[0] = ensure_dtype_nbo(dtype);
+        out_dtypes[0] = ensure_dtype_nbo(
+                            (PyArray_Descr *)PyTuple_GET_ITEM(type_tup, 0));
         if (out_dtypes[0] == NULL) {
             return -1;
         }
@@ -361,7 +384,31 @@ PyUFunc_SimpleUnaryOperationTypeResolver(PyUFuncObject *ufunc,
         return -1;
     }
 
-    return 0;
+    type_num = out_dtypes[0]->type_num;
+
+    /* If we have a built-in type, search in the functions list */
+    if (type_num < NPY_NTYPES) {
+        char *types = ufunc->types;
+        int n = ufunc->ntypes;
+
+        for (i = 0; i < n; ++i) {
+            if (types[2*i] == type_num) {
+                *out_innerloop = ufunc->functions[i];
+                *out_innerloopdata = ufunc->data[i];
+                return 0;
+            }
+        }
+
+        PyErr_Format(PyExc_TypeError,
+                "ufunc '%s' not supported for the input types",
+                ufunc_name);
+        return -1;
+    }
+    else {
+        PyErr_SetString(PyExc_RuntimeError,
+                "user type shouldn't have resulted from type promotion");
+        return -1;
+    }
 }
 
 /*
@@ -370,15 +417,18 @@ PyUFunc_SimpleUnaryOperationTypeResolver(PyUFuncObject *ufunc,
  * casting.
  */
 NPY_NO_EXPORT int
-PyUFunc_OnesLikeTypeResolver(PyUFuncObject *ufunc,
+PyUFunc_OnesLikeTypeResolution(PyUFuncObject *ufunc,
                                 NPY_CASTING NPY_UNUSED(casting),
                                 PyArrayObject **operands,
                                 PyObject *type_tup,
-                                PyArray_Descr **out_dtypes)
+                                PyArray_Descr **out_dtypes,
+                                PyUFuncGenericFunction *out_innerloop,
+                                void **out_innerloopdata)
 {
-    return PyUFunc_SimpleUnaryOperationTypeResolver(ufunc,
+    return PyUFunc_SimpleUnaryOperationTypeResolution(ufunc,
                         NPY_UNSAFE_CASTING,
-                        operands, type_tup, out_dtypes);
+                        operands, type_tup, out_dtypes,
+                        out_innerloop, out_innerloopdata);
 }
 
 
@@ -395,13 +445,15 @@ PyUFunc_OnesLikeTypeResolver(PyUFuncObject *ufunc,
  * Returns 0 on success, -1 on error.
  */
 NPY_NO_EXPORT int
-PyUFunc_SimpleBinaryOperationTypeResolver(PyUFuncObject *ufunc,
+PyUFunc_SimpleBinaryOperationTypeResolution(PyUFuncObject *ufunc,
                                 NPY_CASTING casting,
                                 PyArrayObject **operands,
                                 PyObject *type_tup,
-                                PyArray_Descr **out_dtypes)
+                                PyArray_Descr **out_dtypes,
+                                PyUFuncGenericFunction *out_innerloop,
+                                void **out_innerloopdata)
 {
-    int i, type_num1, type_num2;
+    int i, type_num, type_num1, type_num2;
     char *ufunc_name;
 
     ufunc_name = ufunc->name ? ufunc->name : "<unnamed ufunc>";
@@ -422,8 +474,8 @@ PyUFunc_SimpleBinaryOperationTypeResolver(PyUFuncObject *ufunc,
     type_num2 = PyArray_DESCR(operands[1])->type_num;
     if (type_num1 >= NPY_NTYPES || type_num2 >= NPY_NTYPES ||
             type_num1 == NPY_OBJECT || type_num2 == NPY_OBJECT) {
-        return PyUFunc_DefaultTypeResolver(ufunc, casting, operands,
-                type_tup, out_dtypes);
+        return PyUFunc_DefaultTypeResolution(ufunc, casting, operands,
+                type_tup, out_dtypes, out_innerloop, out_innerloopdata);
     }
 
     if (type_tup == NULL) {
@@ -438,30 +490,24 @@ PyUFunc_SimpleBinaryOperationTypeResolver(PyUFuncObject *ufunc,
         Py_INCREF(out_dtypes[2]);
     }
     else {
-        PyObject *item;
-        PyArray_Descr *dtype = NULL;
-
         /*
          * If the type tuple isn't a single-element tuple, let the
          * default type resolution handle this one.
          */
         if (!PyTuple_Check(type_tup) || PyTuple_GET_SIZE(type_tup) != 1) {
-            return PyUFunc_DefaultTypeResolver(ufunc, casting,
-                    operands, type_tup, out_dtypes);
+            return PyUFunc_DefaultTypeResolution(ufunc, casting,
+                    operands, type_tup, out_dtypes,
+                    out_innerloop, out_innerloopdata);
         }
 
-        item = PyTuple_GET_ITEM(type_tup, 0);
-
-        if (item == Py_None) {
+        if (!PyArray_DescrCheck(PyTuple_GET_ITEM(type_tup, 0))) {
             PyErr_SetString(PyExc_ValueError,
                     "require data type in the type tuple");
             return -1;
         }
-        else if (!PyArray_DescrConverter(item, &dtype)) {
-            return -1;
-        }
 
-        out_dtypes[0] = ensure_dtype_nbo(dtype);
+        out_dtypes[0] = ensure_dtype_nbo(
+                            (PyArray_Descr *)PyTuple_GET_ITEM(type_tup, 0));
         if (out_dtypes[0] == NULL) {
             return -1;
         }
@@ -480,7 +526,31 @@ PyUFunc_SimpleBinaryOperationTypeResolver(PyUFuncObject *ufunc,
         return -1;
     }
 
-    return 0;
+    type_num = out_dtypes[0]->type_num;
+
+    /* If we have a built-in type, search in the functions list */
+    if (type_num < NPY_NTYPES) {
+        char *types = ufunc->types;
+        int n = ufunc->ntypes;
+
+        for (i = 0; i < n; ++i) {
+            if (types[3*i] == type_num) {
+                *out_innerloop = ufunc->functions[i];
+                *out_innerloopdata = ufunc->data[i];
+                return 0;
+            }
+        }
+
+        PyErr_Format(PyExc_TypeError,
+                "ufunc '%s' not supported for the input types",
+                ufunc_name);
+        return -1;
+    }
+    else {
+        PyErr_SetString(PyExc_RuntimeError,
+                "user type shouldn't have resulted from type promotion");
+        return -1;
+    }
 }
 
 /*
@@ -491,20 +561,23 @@ PyUFunc_SimpleBinaryOperationTypeResolver(PyUFuncObject *ufunc,
  * Returns 0 on success, -1 on error.
  */
 NPY_NO_EXPORT int
-PyUFunc_AbsoluteTypeResolver(PyUFuncObject *ufunc,
+PyUFunc_AbsoluteTypeResolution(PyUFuncObject *ufunc,
                                 NPY_CASTING casting,
                                 PyArrayObject **operands,
                                 PyObject *type_tup,
-                                PyArray_Descr **out_dtypes)
+                                PyArray_Descr **out_dtypes,
+                                PyUFuncGenericFunction *out_innerloop,
+                                void **out_innerloopdata)
 {
     /* Use the default for complex types, to find the loop producing float */
     if (PyTypeNum_ISCOMPLEX(PyArray_DESCR(operands[0])->type_num)) {
-        return PyUFunc_DefaultTypeResolver(ufunc, casting, operands,
-                    type_tup, out_dtypes);
+        return PyUFunc_DefaultTypeResolution(ufunc, casting, operands,
+                    type_tup, out_dtypes, out_innerloop, out_innerloopdata);
     }
     else {
-        return PyUFunc_SimpleUnaryOperationTypeResolver(ufunc, casting,
-                    operands, type_tup, out_dtypes);
+        return PyUFunc_SimpleUnaryOperationTypeResolution(ufunc, casting,
+                    operands, type_tup, out_dtypes,
+                    out_innerloop, out_innerloopdata);
     }
 }
 
@@ -595,14 +668,17 @@ timedelta_dtype_with_copied_meta(PyArray_Descr *dtype)
  *    m8[Y|M|B] + M8[<A>]
  */
 NPY_NO_EXPORT int
-PyUFunc_AdditionTypeResolver(PyUFuncObject *ufunc,
+PyUFunc_AdditionTypeResolution(PyUFuncObject *ufunc,
                                 NPY_CASTING casting,
                                 PyArrayObject **operands,
                                 PyObject *type_tup,
-                                PyArray_Descr **out_dtypes)
+                                PyArray_Descr **out_dtypes,
+                                PyUFuncGenericFunction *out_innerloop,
+                                void **out_innerloopdata)
 {
     int type_num1, type_num2;
-    int i;
+    char *types;
+    int i, n;
     char *ufunc_name;
 
     ufunc_name = ufunc->name ? ufunc->name : "<unnamed ufunc>";
@@ -612,8 +688,8 @@ PyUFunc_AdditionTypeResolver(PyUFuncObject *ufunc,
 
     /* Use the default when datetime and timedelta are not involved */
     if (!PyTypeNum_ISDATETIME(type_num1) && !PyTypeNum_ISDATETIME(type_num2)) {
-        return PyUFunc_SimpleBinaryOperationTypeResolver(ufunc, casting,
-                    operands, type_tup, out_dtypes);
+        return PyUFunc_DefaultTypeResolution(ufunc, casting, operands,
+                    type_tup, out_dtypes, out_innerloop, out_innerloopdata);
     }
 
     if (type_num1 == NPY_TIMEDELTA) {
@@ -755,7 +831,22 @@ PyUFunc_AdditionTypeResolver(PyUFuncObject *ufunc,
         return -1;
     }
 
-    return 0;
+    /* Search in the functions list */
+    types = ufunc->types;
+    n = ufunc->ntypes;
+
+    for (i = 0; i < n; ++i) {
+        if (types[3*i] == type_num1 && types[3*i+1] == type_num2) {
+            *out_innerloop = ufunc->functions[i];
+            *out_innerloopdata = ufunc->data[i];
+            return 0;
+        }
+    }
+
+    PyErr_Format(PyExc_TypeError,
+            "internal error: could not find appropriate datetime "
+            "inner loop in %s ufunc", ufunc_name);
+    return -1;
 
 type_reso_error: {
         PyObject *errmsg;
@@ -784,14 +875,17 @@ type_reso_error: {
  *    M8[<A>] - m8[Y|M|B]
  */
 NPY_NO_EXPORT int
-PyUFunc_SubtractionTypeResolver(PyUFuncObject *ufunc,
+PyUFunc_SubtractionTypeResolution(PyUFuncObject *ufunc,
                                 NPY_CASTING casting,
                                 PyArrayObject **operands,
                                 PyObject *type_tup,
-                                PyArray_Descr **out_dtypes)
+                                PyArray_Descr **out_dtypes,
+                                PyUFuncGenericFunction *out_innerloop,
+                                void **out_innerloopdata)
 {
     int type_num1, type_num2;
-    int i;
+    char *types;
+    int i, n;
     char *ufunc_name;
 
     ufunc_name = ufunc->name ? ufunc->name : "<unnamed ufunc>";
@@ -801,8 +895,8 @@ PyUFunc_SubtractionTypeResolver(PyUFuncObject *ufunc,
 
     /* Use the default when datetime and timedelta are not involved */
     if (!PyTypeNum_ISDATETIME(type_num1) && !PyTypeNum_ISDATETIME(type_num2)) {
-        return PyUFunc_SimpleBinaryOperationTypeResolver(ufunc, casting,
-                    operands, type_tup, out_dtypes);
+        return PyUFunc_DefaultTypeResolution(ufunc, casting, operands,
+                    type_tup, out_dtypes, out_innerloop, out_innerloopdata);
     }
 
     if (type_num1 == NPY_TIMEDELTA) {
@@ -925,7 +1019,22 @@ PyUFunc_SubtractionTypeResolver(PyUFuncObject *ufunc,
         return -1;
     }
 
-    return 0;
+    /* Search in the functions list */
+    types = ufunc->types;
+    n = ufunc->ntypes;
+
+    for (i = 0; i < n; ++i) {
+        if (types[3*i] == type_num1 && types[3*i+1] == type_num2) {
+            *out_innerloop = ufunc->functions[i];
+            *out_innerloopdata = ufunc->data[i];
+            return 0;
+        }
+    }
+
+    PyErr_Format(PyExc_TypeError,
+            "internal error: could not find appropriate datetime "
+            "inner loop in %s ufunc", ufunc_name);
+    return -1;
 
 type_reso_error: {
         PyObject *errmsg;
@@ -951,14 +1060,17 @@ type_reso_error: {
  *    m8[<A>] * float## => m8[<A>] * float64
  */
 NPY_NO_EXPORT int
-PyUFunc_MultiplicationTypeResolver(PyUFuncObject *ufunc,
+PyUFunc_MultiplicationTypeResolution(PyUFuncObject *ufunc,
                                 NPY_CASTING casting,
                                 PyArrayObject **operands,
                                 PyObject *type_tup,
-                                PyArray_Descr **out_dtypes)
+                                PyArray_Descr **out_dtypes,
+                                PyUFuncGenericFunction *out_innerloop,
+                                void **out_innerloopdata)
 {
     int type_num1, type_num2;
-    int i;
+    char *types;
+    int i, n;
     char *ufunc_name;
 
     ufunc_name = ufunc->name ? ufunc->name : "<unnamed ufunc>";
@@ -968,8 +1080,8 @@ PyUFunc_MultiplicationTypeResolver(PyUFuncObject *ufunc,
 
     /* Use the default when datetime and timedelta are not involved */
     if (!PyTypeNum_ISDATETIME(type_num1) && !PyTypeNum_ISDATETIME(type_num2)) {
-        return PyUFunc_SimpleBinaryOperationTypeResolver(ufunc, casting,
-                    operands, type_tup, out_dtypes);
+        return PyUFunc_DefaultTypeResolution(ufunc, casting, operands,
+                    type_tup, out_dtypes, out_innerloop, out_innerloopdata);
     }
 
     if (type_num1 == NPY_TIMEDELTA) {
@@ -1068,7 +1180,22 @@ PyUFunc_MultiplicationTypeResolver(PyUFuncObject *ufunc,
         return -1;
     }
 
-    return 0;
+    /* Search in the functions list */
+    types = ufunc->types;
+    n = ufunc->ntypes;
+
+    for (i = 0; i < n; ++i) {
+        if (types[3*i] == type_num1 && types[3*i+1] == type_num2) {
+            *out_innerloop = ufunc->functions[i];
+            *out_innerloopdata = ufunc->data[i];
+            return 0;
+        }
+    }
+
+    PyErr_Format(PyExc_TypeError,
+            "internal error: could not find appropriate datetime "
+            "inner loop in %s ufunc", ufunc_name);
+    return -1;
 
 type_reso_error: {
         PyObject *errmsg;
@@ -1093,14 +1220,17 @@ type_reso_error: {
  *    m8[<A>] / float## to m8[<A>] / float64 -> m8[<A>]
  */
 NPY_NO_EXPORT int
-PyUFunc_DivisionTypeResolver(PyUFuncObject *ufunc,
+PyUFunc_DivisionTypeResolution(PyUFuncObject *ufunc,
                                 NPY_CASTING casting,
                                 PyArrayObject **operands,
                                 PyObject *type_tup,
-                                PyArray_Descr **out_dtypes)
+                                PyArray_Descr **out_dtypes,
+                                PyUFuncGenericFunction *out_innerloop,
+                                void **out_innerloopdata)
 {
     int type_num1, type_num2;
-    int i;
+    char *types;
+    int i, n;
     char *ufunc_name;
 
     ufunc_name = ufunc->name ? ufunc->name : "<unnamed ufunc>";
@@ -1110,8 +1240,8 @@ PyUFunc_DivisionTypeResolver(PyUFuncObject *ufunc,
 
     /* Use the default when datetime and timedelta are not involved */
     if (!PyTypeNum_ISDATETIME(type_num1) && !PyTypeNum_ISDATETIME(type_num2)) {
-        return PyUFunc_DefaultTypeResolver(ufunc, casting, operands,
-                    type_tup, out_dtypes);
+        return PyUFunc_DefaultTypeResolution(ufunc, casting, operands,
+                    type_tup, out_dtypes, out_innerloop, out_innerloopdata);
     }
 
     if (type_num1 == NPY_TIMEDELTA) {
@@ -1187,7 +1317,22 @@ PyUFunc_DivisionTypeResolver(PyUFuncObject *ufunc,
         return -1;
     }
 
-    return 0;
+    /* Search in the functions list */
+    types = ufunc->types;
+    n = ufunc->ntypes;
+
+    for (i = 0; i < n; ++i) {
+        if (types[3*i] == type_num1 && types[3*i+1] == type_num2) {
+            *out_innerloop = ufunc->functions[i];
+            *out_innerloopdata = ufunc->data[i];
+            return 0;
+        }
+    }
+
+    PyErr_Format(PyExc_TypeError,
+            "internal error: could not find appropriate datetime "
+            "inner loop in %s ufunc", ufunc_name);
+    return -1;
 
 type_reso_error: {
         PyObject *errmsg;
@@ -1202,122 +1347,6 @@ type_reso_error: {
         PyErr_SetObject(PyExc_TypeError, errmsg);
         return -1;
     }
-}
-
-static int
-find_userloop(PyUFuncObject *ufunc,
-                PyArray_Descr **dtypes,
-                PyUFuncGenericFunction *out_innerloop,
-                void **out_innerloopdata)
-{
-    npy_intp i, nin = ufunc->nin, j, nargs = nin + ufunc->nout;
-    PyUFunc_Loop1d *funcdata;
-
-    /* Use this to try to avoid repeating the same userdef loop search */
-    int last_userdef = -1;
-
-    for (i = 0; i < nin; ++i) {
-        int type_num = dtypes[i]->type_num;
-        if (type_num != last_userdef && PyTypeNum_ISUSERDEF(type_num)) {
-            PyObject *key, *obj;
-
-            last_userdef = type_num;
-
-            key = PyInt_FromLong(type_num);
-            if (key == NULL) {
-                return -1;
-            }
-            obj = PyDict_GetItem(ufunc->userloops, key);
-            Py_DECREF(key);
-            if (obj == NULL) {
-                continue;
-            }
-            funcdata = (PyUFunc_Loop1d *)NpyCapsule_AsVoidPtr(obj);
-            while (funcdata != NULL) {
-                int *types = funcdata->arg_types;
-
-                for (j = 0; j < nargs; ++j) {
-                    if (types[j] != dtypes[j]->type_num) {
-                        break;
-                    }
-                }
-                /* It matched */
-                if (j == nargs) {
-                    *out_innerloop = funcdata->func;
-                    *out_innerloopdata = funcdata->data;
-                    return 1;
-                }
-
-                funcdata = funcdata->next;
-            }
-        }
-    }
-
-    /* Didn't find a match */
-    return 0;
-}
-
-NPY_NO_EXPORT int
-PyUFunc_DefaultLegacyInnerLoopSelector(PyUFuncObject *ufunc,
-                                PyArray_Descr **dtypes,
-                                PyUFuncGenericFunction *out_innerloop,
-                                void **out_innerloopdata,
-                                int *out_needs_api)
-{
-    int nargs = ufunc->nargs;
-    char *types;
-    const char *ufunc_name;
-    PyObject *errmsg;
-    int i, j;
-
-    ufunc_name = ufunc->name ? ufunc->name : "(unknown)";
-
-    /*
-     * If there are user-loops search them first.
-     * TODO: There needs to be a loop selection acceleration structure,
-     *       like a hash table.
-     */
-    if (ufunc->userloops) {
-        switch (find_userloop(ufunc, dtypes,
-                    out_innerloop, out_innerloopdata)) {
-            /* Error */
-            case -1:
-                return -1;
-            /* Found a loop */
-            case 1:
-                return 0;
-        }
-    }
-
-    types = ufunc->types;
-    for (i = 0; i < ufunc->ntypes; ++i) {
-        /* Copy the types into an int array for matching */
-        for (j = 0; j < nargs; ++j) {
-            if (types[j] != dtypes[j]->type_num) {
-                break;
-            }
-        }
-        if (j == nargs) {
-            *out_innerloop = ufunc->functions[i];
-            *out_innerloopdata = ufunc->data[i];
-            return 0;
-        }
-
-        types += nargs;
-    }
-
-    errmsg = PyUString_FromFormat("ufunc '%s' did not contain a loop "
-                    "with signature matching types ", ufunc_name);
-    for (i = 0; i < nargs; ++i) {
-        PyUString_ConcatAndDel(&errmsg,
-                PyObject_Repr((PyObject *)dtypes[i]));
-        if (i < nargs - 1) {
-            PyUString_ConcatAndDel(&errmsg, PyUString_FromString(" "));
-        }
-    }
-    PyErr_SetObject(PyExc_TypeError, errmsg);
-
-    return -1;
 }
 
 typedef struct {
@@ -1351,34 +1380,40 @@ ufunc_masker_data_clone(NpyAuxData *data)
  */
 static void
 unmasked_ufunc_loop_as_masked(
-             char **dataptrs, npy_intp *strides,
-             char *mask, npy_intp mask_stride,
-             npy_intp loopsize,
+             char **args,
+             npy_intp *dimensions,
+             npy_intp *steps,
              NpyAuxData *innerloopdata)
 {
     _ufunc_masker_data *data;
     int iargs, nargs;
     PyUFuncGenericFunction unmasked_innerloop;
     void *unmasked_innerloopdata;
-    npy_intp subloopsize;
+    npy_intp loopsize, subloopsize;
+    char *mask;
+    npy_intp mask_stride;
 
     /* Put the aux data into local variables */
     data = (_ufunc_masker_data *)innerloopdata;
     unmasked_innerloop = data->unmasked_innerloop;
     unmasked_innerloopdata = data->unmasked_innerloopdata;
     nargs = data->nargs;
+    loopsize = *dimensions;
+    mask = args[nargs];
+    mask_stride = steps[nargs];
+
 
     /* Process the data as runs of unmasked values */
     do {
         /* Skip masked values */
         subloopsize = 0;
         while (subloopsize < loopsize &&
-                        !NpyMaskValue_IsExposed(*(npy_mask *)mask)) {
+                        !NpyMask_IsExposed(*(npy_mask *)mask)) {
             ++subloopsize;
             mask += mask_stride;
         }
         for (iargs = 0; iargs < nargs; ++iargs) {
-            dataptrs[iargs] += subloopsize * strides[iargs];
+            args[iargs] += subloopsize * steps[iargs];
         }
         loopsize -= subloopsize;
         /*
@@ -1387,52 +1422,38 @@ unmasked_ufunc_loop_as_masked(
          */
         subloopsize = 0;
         while (subloopsize < loopsize &&
-                        NpyMaskValue_IsExposed(*(npy_mask *)mask)) {
+                        NpyMask_IsExposed(*(npy_mask *)mask)) {
             ++subloopsize;
             mask += mask_stride;
         }
-        unmasked_innerloop(dataptrs, &subloopsize, strides,
-                                        unmasked_innerloopdata);
+        unmasked_innerloop(args, &subloopsize, steps, unmasked_innerloopdata);
         for (iargs = 0; iargs < nargs; ++iargs) {
-            dataptrs[iargs] += subloopsize * strides[iargs];
+            args[iargs] += subloopsize * steps[iargs];
         }
         loopsize -= subloopsize;
     } while (loopsize > 0);
 }
 
 
-/*
- * This function wraps a legacy inner loop so it becomes masked.
+/*UFUNC_API
+ *
+ * This function calls the unmasked type resolution function of the
+ * ufunc, then wraps it with a function which only calls the inner
+ * loop where the mask is True.
  *
  * Returns 0 on success, -1 on error.
  */
 NPY_NO_EXPORT int
-PyUFunc_DefaultMaskedInnerLoopSelector(PyUFuncObject *ufunc,
-                            PyArray_Descr **dtypes,
-                            PyArray_Descr *mask_dtype,
-                            npy_intp *NPY_UNUSED(fixed_strides),
-                            npy_intp NPY_UNUSED(fixed_mask_stride),
-                            PyUFunc_MaskedStridedInnerLoopFunc **out_innerloop,
-                            NpyAuxData **out_innerloopdata,
-                            int *out_needs_api)
+PyUFunc_DefaultTypeResolutionMasked(PyUFuncObject *ufunc,
+                                NPY_CASTING casting,
+                                PyArrayObject **operands,
+                                PyObject *type_tup,
+                                PyArray_Descr **out_dtypes,
+                                PyUFuncGenericMaskedFunction *out_innerloop,
+                                NpyAuxData **out_innerloopdata)
 {
     int retcode;
     _ufunc_masker_data *data;
-
-    if (ufunc->legacy_inner_loop_selector == NULL) {
-        PyErr_SetString(PyExc_RuntimeError,
-                "the ufunc default masked inner loop selector doesn't "
-                "yet support wrapping the new inner loop selector, it "
-                "still only wraps the legacy inner loop selector");
-        return -1;
-    }
-
-    if (mask_dtype->type_num != NPY_BOOL) {
-        PyErr_SetString(PyExc_ValueError,
-                "only boolean masks are supported in ufunc inner loops "
-                "presently");
-        return -1;
-    }
 
     /* Create a new NpyAuxData object for the masker data */
     data = (_ufunc_masker_data *)PyArray_malloc(sizeof(_ufunc_masker_data));
@@ -1446,9 +1467,9 @@ PyUFunc_DefaultMaskedInnerLoopSelector(PyUFuncObject *ufunc,
     data->nargs = ufunc->nin + ufunc->nout;
 
     /* Get the unmasked ufunc inner loop */
-    retcode = ufunc->legacy_inner_loop_selector(ufunc, dtypes,
-                    &data->unmasked_innerloop, &data->unmasked_innerloopdata,
-                    out_needs_api);
+    retcode = ufunc->type_resolution_function(ufunc, casting,
+                    operands, type_tup, out_dtypes,
+                    &data->unmasked_innerloop, &data->unmasked_innerloopdata);
     if (retcode < 0) {
         PyArray_free(data);
         return retcode;
@@ -1555,66 +1576,39 @@ ufunc_loop_matches(PyUFuncObject *self,
 
 static int
 set_ufunc_loop_data_types(PyUFuncObject *self, PyArrayObject **op,
-                    PyArray_Descr **out_dtypes,
-                    int *type_nums)
+                    PyArray_Descr **out_dtype,
+                    int *types)
 {
     int i, nin = self->nin, nop = nin + self->nout;
 
-    /*
-     * Fill the dtypes array.
-     * For outputs,
-     * also search the inputs for a matching type_num to copy
-     * instead of creating a new one, similarly to preserve metadata.
-     **/
+    /* Fill the dtypes array */
     for (i = 0; i < nop; ++i) {
-        /*
-         * Copy the dtype from 'op' if the type_num matches,
-         * to preserve metadata.
-         */
-        if (op[i] != NULL && PyArray_DESCR(op[i])->type_num == type_nums[i]) {
-            out_dtypes[i] = ensure_dtype_nbo(PyArray_DESCR(op[i]));
-            Py_XINCREF(out_dtypes[i]);
-        }
-        /*
-         * For outputs, copy the dtype from op[0] if the type_num
-         * matches, similarly to preserve metdata.
-         */
-        else if (i >= nin && op[0] != NULL &&
-                            PyArray_DESCR(op[0])->type_num == type_nums[i]) {
-            out_dtypes[i] = ensure_dtype_nbo(PyArray_DESCR(op[0]));
-            Py_XINCREF(out_dtypes[i]);
-        }
-        /* Otherwise create a plain descr from the type number */
-        else {
-            out_dtypes[i] = PyArray_DescrFromType(type_nums[i]);
-        }
-
-        if (out_dtypes[i] == NULL) {
-            goto fail;
+        out_dtype[i] = PyArray_DescrFromType(types[i]);
+        if (out_dtype[i] == NULL) {
+            while (--i >= 0) {
+                Py_DECREF(out_dtype[i]);
+                out_dtype[i] = NULL;
+            }
+            return -1;
         }
     }
 
     return 0;
-
-fail:
-    while (--i >= 0) {
-        Py_DECREF(out_dtypes[i]);
-        out_dtypes[i] = NULL;
-    }
-    return -1;
 }
 
 /*
  * Does a search through the arguments and the loops
  */
 static int
-linear_search_userloop_type_resolver(PyUFuncObject *self,
+find_ufunc_matching_userloop(PyUFuncObject *self,
                         PyArrayObject **op,
                         NPY_CASTING input_casting,
                         NPY_CASTING output_casting,
                         int any_object,
                         int use_min_scalar,
                         PyArray_Descr **out_dtype,
+                        PyUFuncGenericFunction *out_innerloop,
+                        void **out_innerloopdata,
                         int *out_no_castable_output,
                         char *out_err_src_typecode,
                         char *out_err_dst_typecode)
@@ -1656,6 +1650,11 @@ linear_search_userloop_type_resolver(PyUFuncObject *self,
                     /* Found a match */
                     case 1:
                         set_ufunc_loop_data_types(self, op, out_dtype, types);
+
+                        /* Save the inner loop and its data */
+                        *out_innerloop = funcdata->func;
+                        *out_innerloopdata = funcdata->data;
+
                         return 0;
                 }
 
@@ -1672,14 +1671,16 @@ linear_search_userloop_type_resolver(PyUFuncObject *self,
  * Does a search through the arguments and the loops
  */
 static int
-type_tuple_userloop_type_resolver(PyUFuncObject *self,
+find_ufunc_specified_userloop(PyUFuncObject *self,
                         int n_specified,
                         int *specified_types,
                         PyArrayObject **op,
                         NPY_CASTING casting,
                         int any_object,
                         int use_min_scalar,
-                        PyArray_Descr **out_dtype)
+                        PyArray_Descr **out_dtype,
+                        PyUFuncGenericFunction *out_innerloop,
+                        void **out_innerloopdata)
 {
     int i, j, nin = self->nin, nop = nin + self->nout;
     PyUFunc_Loop1d *funcdata;
@@ -1713,8 +1714,7 @@ type_tuple_userloop_type_resolver(PyUFuncObject *self,
 
                 if (n_specified == nop) {
                     for (j = 0; j < nop; ++j) {
-                        if (types[j] != specified_types[j] &&
-                                    specified_types[j] != NPY_NOTYPE) {
+                        if (types[j] != specified_types[j]) {
                             matched = 0;
                             break;
                         }
@@ -1737,6 +1737,11 @@ type_tuple_userloop_type_resolver(PyUFuncObject *self,
                     /* It works */
                     case 1:
                         set_ufunc_loop_data_types(self, op, out_dtype, types);
+
+                        /* Save the inner loop and its data */
+                        *out_innerloop = funcdata->func;
+                        *out_innerloopdata = funcdata->data;
+
                         return 0;
                     /* Didn't match */
                     case 0:
@@ -1836,12 +1841,14 @@ should_use_min_scalar(PyArrayObject **op, int nop)
  * references in out_dtype.  This function does not do its own clean-up.
  */
 NPY_NO_EXPORT int
-linear_search_type_resolver(PyUFuncObject *self,
+find_best_ufunc_inner_loop(PyUFuncObject *self,
                         PyArrayObject **op,
                         NPY_CASTING input_casting,
                         NPY_CASTING output_casting,
                         int any_object,
-                        PyArray_Descr **out_dtype)
+                        PyArray_Descr **out_dtype,
+                        PyUFuncGenericFunction *out_innerloop,
+                        void **out_innerloopdata)
 {
     npy_intp i, j, nin = self->nin, nop = nin + self->nout;
     int types[NPY_MAXARGS];
@@ -1857,9 +1864,10 @@ linear_search_type_resolver(PyUFuncObject *self,
 
     /* If the ufunc has userloops, search for them. */
     if (self->userloops) {
-        switch (linear_search_userloop_type_resolver(self, op,
+        switch (find_ufunc_matching_userloop(self, op,
                                 input_casting, output_casting,
-                                any_object, use_min_scalar, out_dtype,
+                                any_object, use_min_scalar,
+                                out_dtype, out_innerloop, out_innerloopdata,
                                 &no_castable_output, &err_src_typecode,
                                 &err_dst_typecode)) {
             /* Error */
@@ -1908,8 +1916,14 @@ linear_search_type_resolver(PyUFuncObject *self,
             /* Found a match */
             case 1:
                 set_ufunc_loop_data_types(self, op, out_dtype, types);
+
+                /* Save the inner loop and its data */
+                *out_innerloop = self->functions[i];
+                *out_innerloopdata = self->data[i];
+
                 return 0;
         }
+
     }
 
     /* If no function was found, throw an error */
@@ -1944,12 +1958,14 @@ linear_search_type_resolver(PyUFuncObject *self,
  * references in out_dtype.  This function does not do its own clean-up.
  */
 NPY_NO_EXPORT int
-type_tuple_type_resolver(PyUFuncObject *self,
+find_specified_ufunc_inner_loop(PyUFuncObject *self,
                         PyObject *type_tup,
                         PyArrayObject **op,
                         NPY_CASTING casting,
                         int any_object,
-                        PyArray_Descr **out_dtype)
+                        PyArray_Descr **out_dtype,
+                        PyUFuncGenericFunction *out_innerloop,
+                        void **out_innerloopdata)
 {
     npy_intp i, j, n, nin = self->nin, nop = nin + self->nout;
     int n_specified = 0;
@@ -1966,37 +1982,23 @@ type_tuple_type_resolver(PyUFuncObject *self,
 
     /* Fill in specified_types from the tuple or string */
     if (PyTuple_Check(type_tup)) {
-        int nonecount = 0;
         n = PyTuple_GET_SIZE(type_tup);
         if (n != 1 && n != nop) {
             PyErr_Format(PyExc_ValueError,
-                         "a type-tuple must be specified "
+                         "a type-tuple must be specified " \
                          "of length 1 or %d for ufunc '%s'", (int)nop,
                          self->name ? self->name : "(unknown)");
             return -1;
         }
 
         for (i = 0; i < n; ++i) {
-            PyObject *item = PyTuple_GET_ITEM(type_tup, i);
-            if (item == Py_None) {
-                specified_types[i] = NPY_NOTYPE;
-                ++nonecount;
+            PyArray_Descr *dtype = NULL;
+            if (!PyArray_DescrConverter(PyTuple_GET_ITEM(type_tup, i),
+                                                                &dtype)) {
+                return -1;
             }
-            else {
-                PyArray_Descr *dtype = NULL;
-                if (!PyArray_DescrConverter(item, &dtype)) {
-                    return -1;
-                }
-                specified_types[i] = dtype->type_num;
-                Py_DECREF(dtype);
-            }
-        }
-
-        if (nonecount == n) {
-            PyErr_SetString(PyExc_ValueError,
-                    "the type-tuple provided to the ufunc "
-                    "must specify at least one none-None dtype");
-            return -1;
+            specified_types[i] = dtype->type_num;
+            Py_DECREF(dtype);
         }
 
         n_specified = n;
@@ -2062,11 +2064,11 @@ type_tuple_type_resolver(PyUFuncObject *self,
 
     /* If the ufunc has userloops, search for them. */
     if (self->userloops) {
-        switch (type_tuple_userloop_type_resolver(self,
+        switch (find_ufunc_specified_userloop(self,
                         n_specified, specified_types,
                         op, casting,
                         any_object, use_min_scalar,
-                        out_dtype)) {
+                        out_dtype, out_innerloop, out_innerloopdata)) {
             /* Error */
             case -1:
                 return -1;
@@ -2087,8 +2089,7 @@ type_tuple_type_resolver(PyUFuncObject *self,
 
         if (n_specified == nop) {
             for (j = 0; j < nop; ++j) {
-                if (types[j] != specified_types[j] &&
-                                specified_types[j] != NPY_NOTYPE) {
+                if (types[j] != specified_types[j]) {
                     matched = 0;
                     break;
                 }
@@ -2114,6 +2115,11 @@ type_tuple_type_resolver(PyUFuncObject *self,
             /* It worked */
             case 1:
                 set_ufunc_loop_data_types(self, op, out_dtype, types);
+
+                /* Save the inner loop and its data */
+                *out_innerloop = self->functions[i];
+                *out_innerloopdata = self->data[i];
+
                 return 0;
             /* Didn't work */
             case 0:
@@ -2125,6 +2131,7 @@ type_tuple_type_resolver(PyUFuncObject *self,
                      ufunc_name);
                 return -1;
         }
+
     }
 
     /* If no function was found, throw an error */

@@ -120,7 +120,6 @@ static int
 _check_for_commastring(char *type, Py_ssize_t len)
 {
     Py_ssize_t i;
-    int sqbracket;
 
     /* Check for ints at start of string */
     if ((type[0] >= '0'
@@ -141,21 +140,10 @@ _check_for_commastring(char *type, Py_ssize_t len)
                 && type[2] == ')'))) {
         return 1;
     }
-    /* Check for presence of commas outside square [] brackets */
-    sqbracket = 0;
+    /* Check for presence of commas */
     for (i = 1; i < len; i++) {
-        switch (type[i]) {
-            case ',':
-                if (sqbracket == 0) {
-                    return 1;
-                }
-                break;
-            case '[':
-                ++sqbracket;
-                break;
-            case ']':
-                --sqbracket;
-                break;
+        if (type[i] == ',') {
+            return 1;
         }
     }
     return 0;
@@ -594,9 +582,6 @@ _convert_from_list(PyObject *obj, int align)
  * found in the _internal.py file patterned after that one -- the approach is
  * to try to convert to a list (with tuples if any repeat information is
  * present) and then call the _convert_from_list)
- *
- * TODO: Calling Python from C like this in critical-path code is not
- *       a good idea. This should all be converted to C code.
  */
 static PyArray_Descr *
 _convert_from_commastring(PyObject *obj, int align)
@@ -729,12 +714,13 @@ validate_object_field_overlap(PyArray_Descr *dtype)
     PyObject *names, *fields, *key, *tup, *title;
     Py_ssize_t i, j, names_size;
     PyArray_Descr *fld_dtype, *fld2_dtype;
-    int fld_offset, fld2_offset;
+    int fld_offset, fld2_offset, align;
 
     /* Get some properties from the dtype */
     names = dtype->names;
     names_size = PyTuple_GET_SIZE(names);
     fields = dtype->fields;
+    align = PyDataType_FLAGCHK(dtype, NPY_ALIGNED_STRUCT);
 
     for (i = 0; i < names_size; ++i) {
         key = PyTuple_GET_ITEM(names, i);
@@ -889,16 +875,16 @@ _convert_from_dict(PyObject *obj, int align)
 
     totalsize = 0;
     for (i = 0; i < n; i++) {
-        PyObject *tup, *descr, *ind, *title, *name, *off;
+        PyObject *tup, *descr, *index, *title, *name, *off;
         int len, ret, _align = 1;
         PyArray_Descr *newdescr;
 
         /* Build item to insert (descr, offset, [title])*/
         len = 2;
         title = NULL;
-        ind = PyInt_FromLong(i);
+        index = PyInt_FromLong(i);
         if (titles) {
-            title=PyObject_GetItem(titles, ind);
+            title=PyObject_GetItem(titles, index);
             if (title && title != Py_None) {
                 len = 3;
             }
@@ -908,7 +894,7 @@ _convert_from_dict(PyObject *obj, int align)
             PyErr_Clear();
         }
         tup = PyTuple_New(len);
-        descr = PyObject_GetItem(descrs, ind);
+        descr = PyObject_GetItem(descrs, index);
         if (!descr) {
             goto fail;
         }
@@ -921,7 +907,7 @@ _convert_from_dict(PyObject *obj, int align)
         Py_DECREF(descr);
         if (ret == PY_FAIL) {
             Py_DECREF(tup);
-            Py_DECREF(ind);
+            Py_DECREF(index);
             goto fail;
         }
         PyTuple_SET_ITEM(tup, 0, (PyObject *)newdescr);
@@ -931,7 +917,7 @@ _convert_from_dict(PyObject *obj, int align)
         }
         if (offsets) {
             long offset;
-            off = PyObject_GetItem(offsets, ind);
+            off = PyObject_GetItem(offsets, index);
             if (!off) {
                 goto fail;
             }
@@ -964,11 +950,11 @@ _convert_from_dict(PyObject *obj, int align)
         if (len == 3) {
             PyTuple_SET_ITEM(tup, 2, title);
         }
-        name = PyObject_GetItem(names, ind);
+        name = PyObject_GetItem(names, index);
         if (!name) {
             goto fail;
         }
-        Py_DECREF(ind);
+        Py_DECREF(index);
 #if defined(NPY_PY3K)
         if (!PyUString_Check(name)) {
 #else
@@ -2779,15 +2765,15 @@ arraydescr_struct_list_str(PyArray_Descr *dtype)
         }
         /* Special case subarray handling here */
         if (PyDataType_HASSUBARRAY(fld_dtype)) {
-            tmp = arraydescr_construction_repr(
-                            fld_dtype->subarray->base, 0, 1);
+            tmp = arraydescr_short_construction_repr(
+                            fld_dtype->subarray->base, 0);
             PyUString_ConcatAndDel(&ret, tmp);
             PyUString_ConcatAndDel(&ret, PyUString_FromString(", "));
             PyUString_ConcatAndDel(&ret,
                             PyObject_Str(fld_dtype->subarray->shape));
         }
         else {
-            tmp = arraydescr_construction_repr(fld_dtype, 0, 1);
+            tmp = arraydescr_short_construction_repr(fld_dtype, 0);
             PyUString_ConcatAndDel(&ret, tmp);
         }
         PyUString_ConcatAndDel(&ret, PyUString_FromString(")"));
@@ -2845,7 +2831,7 @@ arraydescr_struct_dict_str(PyArray_Descr *dtype, int includealignedflag)
         if (title != NULL && title != Py_None) {
             has_titles = 1;
         }
-        tmp = arraydescr_construction_repr(fld_dtype, 0, 1);
+        tmp = arraydescr_short_construction_repr(fld_dtype, 0);
         PyUString_ConcatAndDel(&ret, tmp);
         if (i != names_size - 1) {
             PyUString_ConcatAndDel(&ret, PyUString_FromString(","));
@@ -2929,7 +2915,7 @@ arraydescr_subarray_str(PyArray_Descr *dtype)
     PyObject *p, *ret;
 
     ret = PyUString_FromString("(");
-    p = arraydescr_construction_repr(dtype->subarray->base, 0, 1);
+    p = arraydescr_short_construction_repr(dtype->subarray->base, 0);
     PyUString_ConcatAndDel(&ret, p);
     PyUString_ConcatAndDel(&ret, PyUString_FromString(", "));
     PyUString_ConcatAndDel(&ret, PyObject_Str(dtype->subarray->shape));
@@ -2983,10 +2969,26 @@ arraydescr_struct_repr(PyArray_Descr *dtype)
     return s;
 }
 
-/* See descriptor.h for documentation */
+/*
+ * This creates a shorter repr using 'kind' and 'itemsize',
+ * instead of the longer type name. This is the object passed
+ * as the first parameter to the dtype constructor, and if no
+ * additional constructor parameters are given, will reproduce
+ * the exact memory layout.
+ *
+ * If 'includealignflag' is true, this includes the 'align=True' parameter
+ * inside the struct dtype construction dict when needed. Use this flag
+ * if you want a proper repr string without the 'dtype()' part around it.
+ *
+ * If 'includealignflag' is false, this does not preserve the
+ * 'align=True' parameter or sticky NPY_ALIGNED_STRUCT flag for
+ * struct arrays like the regular repr does, because the 'align'
+ * flag is not part of first dtype constructor parameter. This
+ * mode is intended for a full 'repr', where the 'align=True' is
+ * provided as the second parameter.
+ */
 NPY_NO_EXPORT PyObject *
-arraydescr_construction_repr(PyArray_Descr *dtype, int includealignflag,
-                                int shortrepr)
+arraydescr_short_construction_repr(PyArray_Descr *dtype, int includealignflag)
 {
     PyObject *ret;
     PyArray_DatetimeMetaData *meta;
@@ -3018,44 +3020,11 @@ arraydescr_construction_repr(PyArray_Descr *dtype, int includealignflag,
 
     /* Handle booleans, numbers, and custom dtypes */
     if (dtype->type_num == NPY_BOOL) {
-        if (shortrepr) {
-            return PyUString_FromString("'?'");
-        }
-        else {
-            return PyUString_FromString("'bool'");
-        }
+        return PyUString_FromString("'?'");
     }
     else if (PyTypeNum_ISNUMBER(dtype->type_num)) {
-        /* Short repr with endianness, like '<f8' */
-        if (shortrepr || (dtype->byteorder != NPY_NATIVE &&
-                          dtype->byteorder != NPY_IGNORE)) {
-            return PyUString_FromFormat("'%s%c%d'", byteorder,
-                                        (int)dtype->kind, dtype->elsize);
-        }
-        /* Longer repr, like 'float64' */
-        else {
-            char *kindstr;
-            switch (dtype->kind) {
-                case 'u':
-                    kindstr = "uint";
-                    break;
-                case 'i':
-                    kindstr = "int";
-                    break;
-                case 'f':
-                    kindstr = "float";
-                    break;
-                case 'c':
-                    kindstr = "complex";
-                    break;
-                default:
-                    PyErr_Format(PyExc_RuntimeError,
-                            "internal dtype repr error, unknown kind '%c'",
-                            (int)dtype->kind);
-                    return NULL;
-            }
-            return PyUString_FromFormat("'%s%d'", kindstr, 8*dtype->elsize);
-        }
+        return PyUString_FromFormat("'%s%c%d'", byteorder, (int)dtype->kind,
+                                                dtype->elsize);
     }
     else if (PyTypeNum_ISUSERDEF(dtype->type_num)) {
         char *s = strrchr(dtype->typeobj->tp_name, '.');
@@ -3134,17 +3103,27 @@ arraydescr_construction_repr(PyArray_Descr *dtype, int includealignflag,
 static PyObject *
 arraydescr_repr(PyArray_Descr *dtype)
 {
-    PyObject *ret;
+    PyObject *sub, *s;
 
     if (PyDataType_HASFIELDS(dtype)) {
         return arraydescr_struct_repr(dtype);
     }
     else {
-        ret = PyUString_FromString("dtype(");
-        PyUString_ConcatAndDel(&ret,
-                            arraydescr_construction_repr(dtype, 1, 0));
-        PyUString_ConcatAndDel(&ret, PyUString_FromString(")"));
-        return ret;
+        s = PyUString_FromString("dtype(");
+        sub = arraydescr_str(dtype);
+        if (sub == NULL) {
+            return NULL;
+        }
+        if (!PyDataType_HASSUBARRAY(dtype)) {
+            PyObject *t=PyUString_FromString("'");
+            PyUString_Concat(&sub, t);
+            PyUString_ConcatAndDel(&t, sub);
+            sub = t;
+        }
+        PyUString_ConcatAndDel(&s, sub);
+        sub = PyUString_FromString(")");
+        PyUString_ConcatAndDel(&s, sub);
+        return s;
     }
 }
 

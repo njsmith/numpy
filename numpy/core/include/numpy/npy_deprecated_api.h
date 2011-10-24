@@ -89,10 +89,4 @@
  */
 #define fortran fortran_
 
-/*
- * Deprecated as of NumPy 1.7, as it is a namespace-polluting
- * macro.
- */
-#define FORTRAN_IF PyArray_FORTRAN_IF
-
 #endif

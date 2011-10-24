@@ -287,8 +287,7 @@ PyArray_Min(PyArrayObject *ap, int axis, PyArrayObject *out)
     PyArrayObject *arr;
     PyObject *ret;
 
-    arr=(PyArrayObject *)PyArray_CheckAxis(ap, &axis, NPY_ARRAY_ALLOWNA);
-    if (arr == NULL) {
+    if ((arr=(PyArrayObject *)PyArray_CheckAxis(ap, &axis, 0)) == NULL) {
         return NULL;
     }
     ret = PyArray_GenericReduceFunction(arr, n_ops.minimum, axis,
@@ -307,8 +306,7 @@ PyArray_Ptp(PyArrayObject *ap, int axis, PyArrayObject *out)
     PyObject *ret;
     PyObject *obj1 = NULL, *obj2 = NULL;
 
-    arr=(PyArrayObject *)PyArray_CheckAxis(ap, &axis, NPY_ARRAY_ALLOWNA);
-    if (arr == NULL) {
+    if ((arr=(PyArrayObject *)PyArray_CheckAxis(ap, &axis, 0)) == NULL) {
         return NULL;
     }
     obj1 = PyArray_Max(arr, axis, out);
@@ -355,27 +353,26 @@ __New_PyArray_Std(PyArrayObject *self, int axis, int rtype, PyArrayObject *out,
                   int variance, int num)
 {
     PyObject *obj1 = NULL, *obj2 = NULL, *obj3 = NULL;
-    PyArrayObject *arr1 = NULL, *arr2 = NULL, *arrnew = NULL;
+    PyArrayObject *arr1 = NULL, *arr2 = NULL, *new = NULL;
     PyObject *ret = NULL, *newshape = NULL;
     int i, n;
     npy_intp val;
 
-    arrnew = (PyArrayObject *)PyArray_CheckAxis(self, &axis, NPY_ARRAY_ALLOWNA);
-    if (arrnew == NULL) {
+    if ((new = (PyArrayObject *)PyArray_CheckAxis(self, &axis, 0)) == NULL) {
         return NULL;
     }
     /* Compute and reshape mean */
     arr1 = (PyArrayObject *)PyArray_EnsureAnyArray(
-                    PyArray_Mean(arrnew, axis, rtype, NULL));
+                    PyArray_Mean(new, axis, rtype, NULL));
     if (arr1 == NULL) {
-        Py_DECREF(arrnew);
+        Py_DECREF(new);
         return NULL;
     }
-    n = PyArray_NDIM(arrnew);
+    n = PyArray_NDIM(new);
     newshape = PyTuple_New(n);
     if (newshape == NULL) {
         Py_DECREF(arr1);
-        Py_DECREF(arrnew);
+        Py_DECREF(new);
         return NULL;
     }
     for (i = 0; i < n; i++) {
@@ -383,7 +380,7 @@ __New_PyArray_Std(PyArrayObject *self, int axis, int rtype, PyArrayObject *out,
             val = 1;
         }
         else {
-            val = PyArray_DIM(arrnew,i);
+            val = PyArray_DIM(new,i);
         }
         PyTuple_SET_ITEM(newshape, i, PyInt_FromLong((long)val));
     }
@@ -391,16 +388,16 @@ __New_PyArray_Std(PyArrayObject *self, int axis, int rtype, PyArrayObject *out,
     Py_DECREF(arr1);
     Py_DECREF(newshape);
     if (arr2 == NULL) {
-        Py_DECREF(arrnew);
+        Py_DECREF(new);
         return NULL;
     }
 
     /* Compute x = x - mx */
     arr1 = (PyArrayObject *)PyArray_EnsureAnyArray(
-                PyNumber_Subtract((PyObject *)arrnew, (PyObject *)arr2));
+                PyNumber_Subtract((PyObject *)new, (PyObject *)arr2));
     Py_DECREF(arr2);
     if (arr1 == NULL) {
-        Py_DECREF(arrnew);
+        Py_DECREF(new);
         return NULL;
     }
     /* Compute x * x */
@@ -412,7 +409,7 @@ __New_PyArray_Std(PyArrayObject *self, int axis, int rtype, PyArrayObject *out,
         Py_INCREF(arr1);
     }
     if (obj3 == NULL) {
-        Py_DECREF(arrnew);
+        Py_DECREF(new);
         return NULL;
     }
     arr2 = (PyArrayObject *)PyArray_EnsureAnyArray(
@@ -420,7 +417,7 @@ __New_PyArray_Std(PyArrayObject *self, int axis, int rtype, PyArrayObject *out,
     Py_DECREF(arr1);
     Py_DECREF(obj3);
     if (arr2 == NULL) {
-        Py_DECREF(arrnew);
+        Py_DECREF(new);
         return NULL;
     }
     if (PyArray_ISCOMPLEX(arr2)) {
@@ -442,7 +439,7 @@ __New_PyArray_Std(PyArrayObject *self, int axis, int rtype, PyArrayObject *out,
         Py_INCREF(arr2);
     }
     if (obj3 == NULL) {
-        Py_DECREF(arrnew);
+        Py_DECREF(new);
         return NULL;
     }
     /* Compute add.reduce(x*x,axis) */
@@ -451,11 +448,11 @@ __New_PyArray_Std(PyArrayObject *self, int axis, int rtype, PyArrayObject *out,
     Py_DECREF(obj3);
     Py_DECREF(arr2);
     if (obj1 == NULL) {
-        Py_DECREF(arrnew);
+        Py_DECREF(new);
         return NULL;
     }
-    n = PyArray_DIM(arrnew,axis);
-    Py_DECREF(arrnew);
+    n = PyArray_DIM(new,axis);
+    Py_DECREF(new);
     n = (n-num);
     if (n == 0) {
         n = 1;
@@ -493,9 +490,7 @@ __New_PyArray_Std(PyArrayObject *self, int axis, int rtype, PyArrayObject *out,
 
 finish:
     if (out) {
-        if (PyArray_AssignArray(out, (PyArrayObject *)ret,
-                    NULL, NPY_DEFAULT_ASSIGN_CASTING,
-                    0, NULL) < 0) {
+        if (PyArray_CopyAnyInto(out, (PyArrayObject *)ret) < 0) {
             Py_DECREF(ret);
             return NULL;
         }
@@ -513,15 +508,14 @@ finish:
 NPY_NO_EXPORT PyObject *
 PyArray_Sum(PyArrayObject *self, int axis, int rtype, PyArrayObject *out)
 {
-    PyObject *arr, *ret;
+    PyObject *new, *ret;
 
-    arr = PyArray_CheckAxis(self, &axis, NPY_ARRAY_ALLOWNA);
-    if (arr == NULL) {
+    if ((new = PyArray_CheckAxis(self, &axis, 0)) == NULL) {
         return NULL;
     }
-    ret = PyArray_GenericReduceFunction((PyArrayObject *)arr, n_ops.add, axis,
+    ret = PyArray_GenericReduceFunction((PyArrayObject *)new, n_ops.add, axis,
                                         rtype, out);
-    Py_DECREF(arr);
+    Py_DECREF(new);
     return ret;
 }
 
@@ -531,16 +525,14 @@ PyArray_Sum(PyArrayObject *self, int axis, int rtype, PyArrayObject *out)
 NPY_NO_EXPORT PyObject *
 PyArray_Prod(PyArrayObject *self, int axis, int rtype, PyArrayObject *out)
 {
-    PyObject *arr, *ret;
+    PyObject *new, *ret;
 
-    arr = PyArray_CheckAxis(self, &axis, NPY_ARRAY_ALLOWNA);
-    if (arr == NULL) {
+    if ((new = PyArray_CheckAxis(self, &axis, 0)) == NULL) {
         return NULL;
     }
-    ret = PyArray_GenericReduceFunction((PyArrayObject *)arr,
-                                        n_ops.multiply, axis,
+    ret = PyArray_GenericReduceFunction((PyArrayObject *)new, n_ops.multiply, axis,
                                         rtype, out);
-    Py_DECREF(arr);
+    Py_DECREF(new);
     return ret;
 }
 
@@ -550,16 +542,14 @@ PyArray_Prod(PyArrayObject *self, int axis, int rtype, PyArrayObject *out)
 NPY_NO_EXPORT PyObject *
 PyArray_CumSum(PyArrayObject *self, int axis, int rtype, PyArrayObject *out)
 {
-    PyObject *arr, *ret;
+    PyObject *new, *ret;
 
-    arr = PyArray_CheckAxis(self, &axis, NPY_ARRAY_ALLOWNA);
-    if (arr == NULL) {
+    if ((new = PyArray_CheckAxis(self, &axis, 0)) == NULL) {
         return NULL;
     }
-    ret = PyArray_GenericAccumulateFunction((PyArrayObject *)arr,
-                                            n_ops.add, axis,
+    ret = PyArray_GenericAccumulateFunction((PyArrayObject *)new, n_ops.add, axis,
                                             rtype, out);
-    Py_DECREF(arr);
+    Py_DECREF(new);
     return ret;
 }
 
@@ -569,17 +559,16 @@ PyArray_CumSum(PyArrayObject *self, int axis, int rtype, PyArrayObject *out)
 NPY_NO_EXPORT PyObject *
 PyArray_CumProd(PyArrayObject *self, int axis, int rtype, PyArrayObject *out)
 {
-    PyObject *arr, *ret;
+    PyObject *new, *ret;
 
-    arr = PyArray_CheckAxis(self, &axis, NPY_ARRAY_ALLOWNA);
-    if (arr == NULL) {
+    if ((new = PyArray_CheckAxis(self, &axis, 0)) == NULL) {
         return NULL;
     }
 
-    ret = PyArray_GenericAccumulateFunction((PyArrayObject *)arr,
+    ret = PyArray_GenericAccumulateFunction((PyArrayObject *)new,
                                             n_ops.multiply, axis,
                                             rtype, out);
-    Py_DECREF(arr);
+    Py_DECREF(new);
     return ret;
 }
 
@@ -600,24 +589,24 @@ PyArray_Round(PyArrayObject *a, int decimals, PyArrayObject *out)
     if (PyArray_ISCOMPLEX(a)) {
         PyObject *part;
         PyObject *round_part;
-        PyObject *arr;
+        PyObject *new;
         int res;
 
         if (out) {
-            arr = (PyObject *)out;
-            Py_INCREF(arr);
+            new = (PyObject *)out;
+            Py_INCREF(new);
         }
         else {
-            arr = PyArray_Copy(a);
-            if (arr == NULL) {
+            new = PyArray_Copy(a);
+            if (new == NULL) {
                 return NULL;
             }
         }
 
-        /* arr.real = a.real.round(decimals) */
-        part = PyObject_GetAttrString(arr, "real");
+        /* new.real = a.real.round(decimals) */
+        part = PyObject_GetAttrString(new, "real");
         if (part == NULL) {
-            Py_DECREF(arr);
+            Py_DECREF(new);
             return NULL;
         }
         part = PyArray_EnsureAnyArray(part);
@@ -625,20 +614,20 @@ PyArray_Round(PyArrayObject *a, int decimals, PyArrayObject *out)
                                    decimals, NULL);
         Py_DECREF(part);
         if (round_part == NULL) {
-            Py_DECREF(arr);
+            Py_DECREF(new);
             return NULL;
         }
-        res = PyObject_SetAttrString(arr, "real", round_part);
+        res = PyObject_SetAttrString(new, "real", round_part);
         Py_DECREF(round_part);
         if (res < 0) {
-            Py_DECREF(arr);
+            Py_DECREF(new);
             return NULL;
         }
 
-        /* arr.imag = a.imag.round(decimals) */
-        part = PyObject_GetAttrString(arr, "imag");
+        /* new.imag = a.imag.round(decimals) */
+        part = PyObject_GetAttrString(new, "imag");
         if (part == NULL) {
-            Py_DECREF(arr);
+            Py_DECREF(new);
             return NULL;
         }
         part = PyArray_EnsureAnyArray(part);
@@ -646,24 +635,22 @@ PyArray_Round(PyArrayObject *a, int decimals, PyArrayObject *out)
                                    decimals, NULL);
         Py_DECREF(part);
         if (round_part == NULL) {
-            Py_DECREF(arr);
+            Py_DECREF(new);
             return NULL;
         }
-        res = PyObject_SetAttrString(arr, "imag", round_part);
+        res = PyObject_SetAttrString(new, "imag", round_part);
         Py_DECREF(round_part);
         if (res < 0) {
-            Py_DECREF(arr);
+            Py_DECREF(new);
             return NULL;
         }
-        return arr;
+        return new;
     }
     /* do the most common case first */
     if (decimals >= 0) {
         if (PyArray_ISINTEGER(a)) {
             if (out) {
-                if (PyArray_AssignArray(out, a,
-                            NULL, NPY_DEFAULT_ASSIGN_CASTING,
-                            0, NULL) < 0) {
+                if (PyArray_CopyAnyInto(out, a) < 0) {
                     return NULL;
                 }
                 Py_INCREF(out);
@@ -751,16 +738,15 @@ NPY_NO_EXPORT PyObject *
 PyArray_Mean(PyArrayObject *self, int axis, int rtype, PyArrayObject *out)
 {
     PyObject *obj1 = NULL, *obj2 = NULL, *ret;
-    PyArrayObject *arr;
+    PyArrayObject *new;
 
-    arr = (PyArrayObject *)PyArray_CheckAxis(self, &axis, NPY_ARRAY_ALLOWNA);
-    if (arr == NULL) {
+    if ((new = (PyArrayObject *)PyArray_CheckAxis(self, &axis, 0)) == NULL) {
         return NULL;
     }
-    obj1 = PyArray_GenericReduceFunction(arr, n_ops.add, axis,
+    obj1 = PyArray_GenericReduceFunction(new, n_ops.add, axis,
                                          rtype, out);
-    obj2 = PyFloat_FromDouble((double)PyArray_DIM(arr,axis));
-    Py_DECREF(arr);
+    obj2 = PyFloat_FromDouble((double) PyArray_DIM(new,axis));
+    Py_DECREF(new);
     if (obj1 == NULL || obj2 == NULL) {
         Py_XDECREF(obj1);
         Py_XDECREF(obj2);
@@ -787,16 +773,15 @@ PyArray_Mean(PyArrayObject *self, int axis, int rtype, PyArrayObject *out)
 NPY_NO_EXPORT PyObject *
 PyArray_Any(PyArrayObject *self, int axis, PyArrayObject *out)
 {
-    PyObject *arr, *ret;
+    PyObject *new, *ret;
 
-    arr = PyArray_CheckAxis(self, &axis, NPY_ARRAY_ALLOWNA);
-    if (arr == NULL) {
+    if ((new = PyArray_CheckAxis(self, &axis, 0)) == NULL) {
         return NULL;
     }
-    ret = PyArray_GenericReduceFunction((PyArrayObject *)arr,
+    ret = PyArray_GenericReduceFunction((PyArrayObject *)new,
                                         n_ops.logical_or, axis,
                                         PyArray_BOOL, out);
-    Py_DECREF(arr);
+    Py_DECREF(new);
     return ret;
 }
 
@@ -806,16 +791,15 @@ PyArray_Any(PyArrayObject *self, int axis, PyArrayObject *out)
 NPY_NO_EXPORT PyObject *
 PyArray_All(PyArrayObject *self, int axis, PyArrayObject *out)
 {
-    PyObject *arr, *ret;
+    PyObject *new, *ret;
 
-    arr = PyArray_CheckAxis(self, &axis, NPY_ARRAY_ALLOWNA);
-    if (arr == NULL) {
+    if ((new = PyArray_CheckAxis(self, &axis, 0)) == NULL) {
         return NULL;
     }
-    ret = PyArray_GenericReduceFunction((PyArrayObject *)arr,
+    ret = PyArray_GenericReduceFunction((PyArrayObject *)new,
                                         n_ops.logical_and, axis,
                                         PyArray_BOOL, out);
-    Py_DECREF(arr);
+    Py_DECREF(new);
     return ret;
 }
 
@@ -889,11 +873,6 @@ _slow_array_clip(PyArrayObject *self, PyObject *min, PyObject *max, PyArrayObjec
 
 /*NUMPY_API
  * Clip
- *
- * TODO: For adding NA support, a Clip UFunc should be created, then
- *       this should call that ufunc. 'min' and 'max' can default to
- *       the -inf/+inf or the smallest/largest representable values
- *       of the dtype respectively.
  */
 NPY_NO_EXPORT PyObject *
 PyArray_Clip(PyArrayObject *self, PyObject *min, PyObject *max, PyArrayObject *out)
@@ -907,32 +886,15 @@ PyArray_Clip(PyArrayObject *self, PyObject *min, PyObject *max, PyArrayObject *o
     char *max_data, *min_data;
     PyObject *zero;
 
-    /* Treat None the same as NULL */
-    if (min == Py_None) {
-        min = NULL;
-    }
-    if (max == Py_None) {
-        max = NULL;
-    }
-
     if ((max == NULL) && (min == NULL)) {
-        PyErr_SetString(PyExc_ValueError,
-                        "array_clip: must set either max or min");
+        PyErr_SetString(PyExc_ValueError, "array_clip: must set either max "\
+                        "or min");
         return NULL;
     }
 
     func = PyArray_DESCR(self)->f->fastclip;
-    /* Trigger the slow array clip for NA support as well */
-    if (func == NULL ||
-            PyArray_HASMASKNA(self) ||
-            (min != NULL &&
-                (!PyArray_CheckAnyScalar(min) ||
-                 (PyArray_Check(min) &&
-                  PyArray_HASMASKNA((PyArrayObject *)min)))) ||
-            (max != NULL &&
-                (!PyArray_CheckAnyScalar(max) ||
-                 (PyArray_Check(max) &&
-                  PyArray_HASMASKNA((PyArrayObject *)max))))) {
+    if (func == NULL || (min != NULL && !PyArray_CheckAnyScalar(min)) ||
+        (max != NULL && !PyArray_CheckAnyScalar(max))) {
         return _slow_array_clip(self, min, max, out);
     }
     /* Use the fast scalar clip function */
@@ -990,7 +952,7 @@ PyArray_Clip(PyArrayObject *self, PyObject *min, PyObject *max, PyArrayObject *o
     /* Convert max to an array */
     if (max != NULL) {
         maxa = (PyArrayObject *)PyArray_FromAny(max, indescr, 0, 0,
-                                 NPY_ARRAY_DEFAULT, NULL);
+                                         NPY_ARRAY_DEFAULT, NULL);
         if (maxa == NULL) {
             return NULL;
         }
@@ -1032,7 +994,7 @@ PyArray_Clip(PyArrayObject *self, PyObject *min, PyObject *max, PyArrayObject *o
         /* Convert min to an array */
         Py_INCREF(indescr);
         mina = (PyArrayObject *)PyArray_FromAny(min, indescr, 0, 0,
-                                 NPY_ARRAY_DEFAULT, NULL);
+                                         NPY_ARRAY_DEFAULT, NULL);
         Py_DECREF(min);
         if (mina == NULL) {
             goto fail;
@@ -1102,13 +1064,6 @@ PyArray_Clip(PyArrayObject *self, PyObject *min, PyObject *max, PyArrayObject *o
         if (out == NULL) {
             goto fail;
         }
-
-        if ((maxa != NULL && PyArray_HASMASKNA(maxa)) ||
-                                (mina != NULL && PyArray_HASMASKNA(mina))) {
-            if (PyArray_AllocateMaskNA(out, 1, 0, 1) < 0) {
-                goto fail;
-            }
-        }
         outgood = 1;
     }
     else Py_INCREF(out);
@@ -1152,11 +1107,7 @@ PyArray_Clip(PyArrayObject *self, PyObject *min, PyObject *max, PyArrayObject *o
         goto fail;
     }
     if (PyArray_DATA(newout) != PyArray_DATA(newin)) {
-        if (PyArray_AssignArray(newout, newin,
-                    NULL, NPY_DEFAULT_ASSIGN_CASTING,
-                    0, NULL) < 0) {
-            goto fail;
-        }
+        memcpy(PyArray_DATA(newout), PyArray_DATA(newin), PyArray_NBYTES(newin));
     }
 
     /* Now we can call the fast-clip function */
@@ -1206,9 +1157,7 @@ PyArray_Conjugate(PyArrayObject *self, PyArrayObject *out)
     else {
         PyArrayObject *ret;
         if (out) {
-            if (PyArray_AssignArray(out, self,
-                        NULL, NPY_DEFAULT_ASSIGN_CASTING,
-                        0, NULL) < 0) {
+            if (PyArray_CopyAnyInto(out, self) < 0) {
                 return NULL;
             }
             ret = out;

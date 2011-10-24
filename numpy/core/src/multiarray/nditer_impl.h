@@ -101,8 +101,6 @@
 #define NPY_ITFLAG_REDUCE       0x1000
 /* Reduce iteration doesn't need to recalculate reduce loops next time */
 #define NPY_ITFLAG_REUSE_REDUCE_LOOPS 0x2000
-/* The iterator has one or more operands with NPY_ITER_USE_MASKNA set */
-#define NPY_ITFLAG_HAS_MASKNA_OP 0x4000
 
 /* Internal iterator per-operand iterator flags */
 
@@ -135,8 +133,9 @@
 struct NpyIter_InternalOnly {
     /* Initial fixed position data */
     npy_uint32 itflags;
-    npy_uint8 ndim, nop, first_maskna_op;
+    npy_uint8 ndim, nop;
     npy_int8 maskop;
+    npy_uint8 unused_padding;
     npy_intp itersize, iterstart, iterend;
     /* iterindex is only used if RANGED or BUFFERED is set */
     npy_intp iterindex;
@@ -149,8 +148,6 @@ typedef struct NpyIter_BD NpyIter_BufferData;
 
 /* Byte sizes of the iterator members */
 #define NIT_PERM_SIZEOF(itflags, ndim, nop) \
-        NPY_INTP_ALIGNED(NPY_MAXDIMS)
-#define NIT_MASKNA_INDICES_SIZEOF(itflags, ndim, nop) \
         NPY_INTP_ALIGNED(NPY_MAXDIMS)
 #define NIT_DTYPES_SIZEOF(itflags, ndim, nop) \
         ((NPY_SIZEOF_INTP)*(nop))
@@ -168,12 +165,9 @@ typedef struct NpyIter_BD NpyIter_BufferData;
 /* Byte offsets of the iterator members starting from iter->iter_flexdata */
 #define NIT_PERM_OFFSET() \
         (0)
-#define NIT_MASKNA_INDICES_OFFSET(itflags, ndim, nop) \
+#define NIT_DTYPES_OFFSET(itflags, ndim, nop) \
         (NIT_PERM_OFFSET() + \
          NIT_PERM_SIZEOF(itflags, ndim, nop))
-#define NIT_DTYPES_OFFSET(itflags, ndim, nop) \
-        (NIT_MASKNA_INDICES_OFFSET(itflags, ndim, nop) + \
-         NIT_MASKNA_INDICES_SIZEOF(itflags, ndim, nop))
 #define NIT_RESETDATAPTR_OFFSET(itflags, ndim, nop) \
         (NIT_DTYPES_OFFSET(itflags, ndim, nop) + \
          NIT_DTYPES_SIZEOF(itflags, ndim, nop))
@@ -200,8 +194,6 @@ typedef struct NpyIter_BD NpyIter_BufferData;
         ((iter)->ndim)
 #define NIT_NOP(iter) \
         ((iter)->nop)
-#define NIT_FIRST_MASKNA_OP(iter) \
-        ((iter)->first_maskna_op)
 #define NIT_MASKOP(iter) \
         ((iter)->maskop)
 #define NIT_ITERSIZE(iter) \
@@ -214,8 +206,6 @@ typedef struct NpyIter_BD NpyIter_BufferData;
         (iter->iterindex)
 #define NIT_PERM(iter)  ((npy_int8 *)( \
         &(iter)->iter_flexdata + NIT_PERM_OFFSET()))
-#define NIT_MASKNA_INDICES(iter) ((npy_int8 *)( \
-        &(iter)->iter_flexdata + NIT_MASKNA_INDICES_OFFSET(itflags, ndim, nop)))
 #define NIT_DTYPES(iter) ((PyArray_Descr **)( \
         &(iter)->iter_flexdata + NIT_DTYPES_OFFSET(itflags, ndim, nop)))
 #define NIT_RESETDATAPTR(iter) ((char **)( \
@@ -251,11 +241,11 @@ struct NpyIter_BD {
         (&(bufferdata)->bd_flexdata + 2*(nop)))
 #define NBF_REDUCE_OUTERPTRS(bufferdata) ((char **) \
         (&(bufferdata)->bd_flexdata + 3*(nop)))
-#define NBF_READTRANSFERFN(bufferdata) ((PyArray_StridedUnaryOp **) \
+#define NBF_READTRANSFERFN(bufferdata) ((PyArray_StridedTransferFn **) \
         (&(bufferdata)->bd_flexdata + 4*(nop)))
 #define NBF_READTRANSFERDATA(bufferdata) ((NpyAuxData **) \
         (&(bufferdata)->bd_flexdata + 5*(nop)))
-#define NBF_WRITETRANSFERFN(bufferdata) ((PyArray_StridedUnaryOp **) \
+#define NBF_WRITETRANSFERFN(bufferdata) ((PyArray_StridedTransferFn **) \
         (&(bufferdata)->bd_flexdata + 6*(nop)))
 #define NBF_WRITETRANSFERDATA(bufferdata) ((NpyAuxData **) \
         (&(bufferdata)->bd_flexdata + 7*(nop)))
