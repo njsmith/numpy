@@ -19,8 +19,8 @@ from getpass import getuser
 
 SRC_DIR = '../../'
 
-USER_README = 'docs/README.txt'
-DEV_README = SRC_DIR + 'README.txt'
+USER_README = SRC_DIR + 'README.txt'
+DEV_README = SRC_DIR + 'DEV_README.txt'
 
 BUILD_DIR = 'build'
 DIST_DIR = 'dist'
