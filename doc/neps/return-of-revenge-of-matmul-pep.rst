@@ -136,12 +136,14 @@ on large collections of values, while keeping them organized using
 whatever arbitrarily complex array layout works best for the problem
 at hand.
 
-Matrix multiplication is more of a special case.  It's only defined on
-2d arrays (also known as "matrices"), and multiplication is the only
-operation that has a meaningful "matrix" version -- "matrix addition"
+Matrix multiplication is more of a special case.  A 2d array can be
+viewed as a matrix, and multiplication is the only common operation
+that has a distinct, meaningful "matrix" version -- "matrix addition"
 is the same as elementwise addition; there is no such thing as "matrix
 bitwise-or" or "matrix floordiv"; "matrix division" can be defined but
-is not very useful, etc.  However, matrix multiplication is still used
+is not very useful; "matrix exponentiation" is defined in terms of
+matrix multiplication; "matrix inversion" doesn't have a correspodning
+Python operator; etc.  However, matrix multiplication is still used
 very heavily across all numerical application areas; mathematically,
 it's one of the most fundamental operations there is.
 
@@ -165,11 +167,13 @@ For ``numpy.matrix`` objects, ``*`` performs matrix multiplication,
 and elementwise multiplication requires function syntax.  Writing code
 using ``numpy.ndarray`` works fine.  Writing code using
 ``numpy.matrix`` also works fine.  But trouble begins as soon as we
-try to integrate these two pieces of code together.  Code that expects
-an ``ndarray`` and gets a ``matrix``, or vice-versa, may crash or
+try to integrate these two pieces of code together.  ``numpy.matrix``
+subclasses ``numpy.ndarray`` so code that expects an ``ndarray``
+and gets a ``matrix``, or vice-versa, may crash or worse
 return incorrect results.  Keeping track of which functions expect
 which types as inputs, and return which types as outputs, and then
-converting back and forth all the time, is incredibly cumbersome and
+converting back and forth all the time with few or no compile or
+runtime checks is incredibly cumbersome and
 impossible to get right at any scale.  Functions that defensively try
 to handle both types as input and DTRT, find themselves floundering
 into a swamp of ``isinstance`` and ``if`` statements.
@@ -205,7 +209,7 @@ operators, just as was done for ``/``: ``*`` for elementwise
 multiplication, and ``@`` for matrix multiplication.  (Why not the
 reverse?  Because this way is compatible with the existing consensus,
 and because it gives us a consistent rule that all the built-in
-numeric operators also apply in an elementwise manner to arrays; the
+numeric operators except for ``@`` also apply in an elementwise manner to arrays; the
 reverse convention would lead to more special cases.)
 
 So that's why matrix multiplication doesn't and can't just use ``*``.
@@ -999,7 +1003,7 @@ like ``@=``).
 
 We review some of the rejected alternatives here.
 
-**Use a second type that defines __mul__ as matrix multiplication:**
+**Use a subtype that defines __mul__ as matrix multiplication:**
 As discussed above (`Background: What's wrong with the status quo?`_),
 this has been tried this for many years via the ``numpy.matrix`` type
 (and its predecessors in Numeric and numarray).  The result is a
@@ -1015,8 +1019,26 @@ the need to provide a simple and clear mapping between mathematical
 notation and code for novices (see `Transparent syntax is especially
 crucial for non-expert programmers`_).  But, of course, starting out
 newbies with a dispreferred syntax and then expecting them to
-transition later causes its own problems.  The two-type solution is
-worse than the disease.
+transition later causes its own problems.  The existing two-type
+solution is worse than the disease.
+
+**Use a indepdent type that defines __mul__ as matrix multiplication:**
+This shares some, but not all, of the problems of using a
+special subtype.
+Arithmetic mixing this new matrix type and arrays would not be
+allowed; explicit conversion would be necissary.  Shorthand
+(and cheap to compute) properties like that used for transpose
+could be provided, e.g. one coud write::
+
+    a.M * b.M
+
+to multiply arrays ``a`` and ``b`` as matrices.  As in the example regression
+formual, often an expression is interpreted entirely as an array or as a matrix,
+so this may not be too burdonsome.
+
+Some drawbacks are that this would not allow broadcasting to be
+used to perform many multiplications at once (unless one had an
+array of matrices.)
 
 **Add lots of new operators, or add a new generic syntax for defining
 infix operators:** In addition to being generally un-Pythonic and
