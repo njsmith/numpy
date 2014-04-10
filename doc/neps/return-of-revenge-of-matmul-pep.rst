@@ -1034,7 +1034,8 @@ could be provided, e.g. one coud write::
 
 to multiply arrays ``a`` and ``b`` as matrices.  As in the example regression
 formual, often an expression is interpreted entirely as an array or as a matrix,
-so this may not be too burdonsome.
+so this may not be too burdonsome.  If the result need to be immediately
+converted back to an array then (a.M * b.M).A could be used.
 
 Some drawbacks are that this would not allow broadcasting to be
 used to perform many multiplications at once (unless one had an
