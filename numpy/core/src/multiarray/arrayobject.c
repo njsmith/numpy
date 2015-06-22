@@ -1326,23 +1326,19 @@ array_richcompare(PyArrayObject *self, PyObject *other, int cmp_op)
 
     switch (cmp_op) {
     case Py_LT:
-        if (needs_right_binop_forward(obj_self, other, "__gt__", 0) &&
-                Py_TYPE(obj_self)->tp_richcompare != Py_TYPE(other)->tp_richcompare) {
+        if (needs_binop_forward(obj_self, other)) {
             /* See discussion in number.c */
             Py_INCREF(Py_NotImplemented);
             return Py_NotImplemented;
         }
-        result = PyArray_GenericBinaryFunction(self, other,
-                n_ops.less);
+        result = PyArray_GenericBinaryFunction(self, other, n_ops.less);
         break;
     case Py_LE:
-        if (needs_right_binop_forward(obj_self, other, "__ge__", 0) &&
-                Py_TYPE(obj_self)->tp_richcompare != Py_TYPE(other)->tp_richcompare) {
+        if (needs_binop_forward(obj_self, other)) {
             Py_INCREF(Py_NotImplemented);
             return Py_NotImplemented;
         }
-        result = PyArray_GenericBinaryFunction(self, other,
-                n_ops.less_equal);
+        result = PyArray_GenericBinaryFunction(self, other, n_ops.less_equal);
         break;
     case Py_EQ:
         if (other == Py_None) {
@@ -1403,8 +1399,7 @@ array_richcompare(PyArrayObject *self, PyObject *other, int cmp_op)
             return result;
         }
 
-        if (needs_right_binop_forward(obj_self, other, "__eq__", 0) &&
-                Py_TYPE(obj_self)->tp_richcompare != Py_TYPE(other)->tp_richcompare) {
+        if (needs_binop_forward(obj_self, other)) {
             Py_INCREF(Py_NotImplemented);
             return Py_NotImplemented;
         }
@@ -1491,8 +1486,7 @@ array_richcompare(PyArrayObject *self, PyObject *other, int cmp_op)
             return result;
         }
 
-        if (needs_right_binop_forward(obj_self, other, "__ne__", 0) &&
-                Py_TYPE(obj_self)->tp_richcompare != Py_TYPE(other)->tp_richcompare) {
+        if (needs_binop_forward(obj_self, other)) {
             Py_INCREF(Py_NotImplemented);
             return Py_NotImplemented;
         }
@@ -1515,8 +1509,7 @@ array_richcompare(PyArrayObject *self, PyObject *other, int cmp_op)
         }
         break;
     case Py_GT:
-        if (needs_right_binop_forward(obj_self, other, "__lt__", 0) &&
-                Py_TYPE(obj_self)->tp_richcompare != Py_TYPE(other)->tp_richcompare) {
+        if (needs_binop_forward(obj_self, other)) {
             Py_INCREF(Py_NotImplemented);
             return Py_NotImplemented;
         }
@@ -1524,8 +1517,7 @@ array_richcompare(PyArrayObject *self, PyObject *other, int cmp_op)
                 n_ops.greater);
         break;
     case Py_GE:
-        if (needs_right_binop_forward(obj_self, other, "__le__", 0) &&
-                Py_TYPE(obj_self)->tp_richcompare != Py_TYPE(other)->tp_richcompare) {
+        if (needs_binop_forward(obj_self, other)) {
             Py_INCREF(Py_NotImplemented);
             return Py_NotImplemented;
         }

@@ -87,44 +87,183 @@ PyArray_SetNumericOps(PyObject *dict)
         goto fail;
 
 static int
-has_ufunc_attr(PyObject * obj) {
+has_ufunc_attr(PyObject *obj) {
+    PyObject *attr;
+    int result;
+
     /* attribute check is expensive for scalar operations, avoid if possible */
     if (PyArray_CheckExact(obj) || PyArray_CheckAnyScalarExact(obj) ||
         _is_basic_python_type(obj)) {
         return 0;
     }
+
+    attr = PyArray_GetAttrString_SuppressException(obj, "__numpy_ufunc__");
+    if (attr == NULL) {
+        return 0;
+    }
     else {
-        return PyObject_HasAttrString(obj, "__numpy_ufunc__");
+        /*
+         * Pretend that non-callable __numpy_ufunc__ isn't there. This is an
+         * escape hatch in case we want to assign some special meaning to
+         * something like __numpy_ufunc__ = None, later on. (And can be
+         * deleted if we decide we don't want to do that.) See these two
+         * comments:
+         *   https://github.com/numpy/numpy/issues/5844#issuecomment-105081603
+         *   https://github.com/numpy/numpy/issues/5844#issuecomment-105170926
+         */
+        result = PyCallable_Check(attr);
+        Py_DECREF(attr);
+        return result;
     }
 }
 
+static int
+is_scipy_sparse(PyObject *obj) {
+    PyObject *module_name = NULL;
+    PyObject *bytes = NULL;
+    int result = 0;
+    char *contents;
+
+    module_name = PyArray_GetAttrString_SuppressException(
+        (PyObject*) obj->ob_type,
+        "__module__");
+    if (module_name == NULL) {
+        goto done;
+    }
+    if (PyBytes_CheckExact(module_name)) {
+        contents = PyBytes_AS_STRING(module_name);
+    }
+    else if (PyUnicode_CheckExact(module_name)) {
+#if PY_VERSION_HEX == 0x03020000
+        /* Python 3.2: unicode, but old API */
+        bytes = PyUnicode_AsLatin1String((PyUnicode *)module_name);
+        if (bytes == NULL) {
+            PyErr_Clear();
+            goto done;
+        }
+        contents = PyString_AS_STRING(bytes);
+#endif
+#if PY_VERSION_HEX >= 0x03030000
+        /* Python 3.3+: new unicode API */
+        if (PyUnicode_READY(module_name) < 0) {
+            PyErr_Clear();
+            goto done;
+        }
+        /*
+         * We assume that scipy.sparse modules will always have ascii names
+         */
+        if (PyUnicode_KIND(module_name) != PyUnicode_1BYTE_KIND) {
+            goto done;
+        }
+        contents = PyUnicode_1BYTE_DATA(module_name);
+#endif
+    }
+    if (strncmp("scipy.sparse", contents, 12) == 0) {
+        result = 1;
+    }
+
+  done:
+    Py_XDECREF(module_name);
+    Py_XDECREF(bytes);
+    return result;
+}
+
 /*
- * Check whether the operation needs to be forwarded to the right-hand binary
- * operation.
+ * The interaction between binop methods (ndarray.__add__ and friends) and
+ * ufuncs (which dispatch to __numpy_ufunc__) is both complicated in its own
+ * right, and also has complicated historical constraints.
  *
- * This is the case when all of the following conditions apply:
+ * In the very old days, the rules were:
+ * - If the other argument has a higher __array_priority__, then return
+ *   NotImplemented
+ * - Otherwise, call the corresponding ufunc.
+ *   - And the ufunc might return NotImplemented based on some complex
+ *     criteria that I won't reproduce here.
  *
- * (i) the other object defines __numpy_ufunc__
- * (ii) the other object defines the right-hand operation __r*__
- * (iii) Python hasn't already called the right-hand operation
- *       [occurs if the other object is a strict subclass provided
- *       the operation is not in-place]
+ * Ufuncs no longer return NotImplemented (except in a few marginal situations
+ * which are being phased out -- see https://github.com/numpy/numpy/pull/5864
  *
- * An additional check is made in GIVE_UP_IF_HAS_RIGHT_BINOP macro below:
+ * So as of 1.9, the effective rules were:
+ * - If the other argument has a higher __array_priority__, and is *not* a
+ *   subclass of ndarray, then return NotImplemented. (If it is a subclass,
+ *   the regular Python rules have already given it a chance to run; so if we
+ *   are running, then it means the other argument has already returned
+ *   NotImplemented and is basically asking us to take care of things.)
+ * - Otherwise call the corresponding ufunc.
  *
- * (iv) other.__class__.__r*__ is not self.__class__.__r*__
+ * We would like to get rid of __array_priority__, and __numpy_ufunc__
+ * provides a large part of a replacement for it. Once __numpy_ufunc__ is
+ * widely available, the simplest dispatch rules that could possibly work
+ * would be:
+ * - Always call the corresponding ufunc.
  *
- *      This is needed, because CPython does not call __rmul__ if
- *      the tp_number slots of the two objects are the same.
+ * But:
+ * - Doing this immediately would break backwards compatibility -- there's a
+ *   lot of code using __array_priority__ out there.
+ * - It's not at all clear whether __numpy_ufunc__ actually is sufficient for
+ *   all use cases. (See https://github.com/numpy/numpy/issues/5844 for lots
+ *   of discussion of this, and in particular
+ *     https://github.com/numpy/numpy/issues/5844#issuecomment-112014014
+ *   for a summary of some conclusions.)
  *
- * This always prioritizes the __r*__ routines over __numpy_ufunc__, independent
- * of whether the other object is an ndarray subclass or not.
+ * So for 1.10, we are going to try the following rules. For a.__add__(b) will
+ * do:
+ * - If b does not define __numpy_ufunc__, apply the legacy rule:
+ *   - If not isinstance(b, ndarray), and b.__array_priority__ is higher than
+ *     a.__array_priority__, return NotImplemented
+ *   - Otherwise, fall through.
+ * - If b->ob_type["__module__"].startswith("scipy.sparse."), then return
+ *   NotImplemented. (Rationale: scipy.sparse defines __mul__ and np.multiply
+ *   to do two totally different things. We want to grandfather this behavior
+ *   in, but we don't want to support it in the long run, as per PEP
+ *   465. Additionally, several versions of scipy.sparse were released with
+ *   __numpy_ufunc__ implementations that don't match the final interface, and
+ *   we don't want dense + sparse to suddenly start erroring out because
+ *   dense.__add__ dispatched to a broken sparse.__numpy_ufunc__.)
+ * - Otherwise, call the corresponding ufunc.
+ *
+ * For reversed operations like b.__radd__(a), we:
+ * - Call the corresponding ufunc
+ *
+ * This is because by the time the reversed operation is called, there are
+ * only two possibilities: The first possibility is that the current class is
+ * a strict subclass of the other class. In practice, the only way this will
+ * happen is if b is a strict subclass of a, and a is ndarray or a subclass of
+ * ndarray, and neither a nor b has actually overridden this method. In this
+ * case, Python will never call a.__add__ (because it's identical to
+ * b.__radd__), so we have no-one to defer to; there's no reason to return
+ * NotImplemented. The second possibility is that a.__add__ has already been
+ * called and returned NotImplemented. Again, in this case there is no point
+ * in returning NotImplemented.
+ *
+ * In-place operations do not take all the trouble above, because if __iadd__
+ * returns NotImplemented then Python will silently convert the operation into
+ * an out-of-place operation, i.e. 'a += b' will silently become 'a = a +
+ * b'. We don't want to allow this for arrays, because it will create
+ * unexpected memory allocations, break views, etc. Therefore for in-place
+ * operations the rule in 1.10 is:
+ * - Call the corresponding ufunc.
+ *
+ * In the future we might change these rules further. For example, we plan to
+ * eventually deprecate __array_priority__ in cases where __numpy_ufunc__ is
+ * not present, and we might decide that we need somewhat more flexible
+ * dispatch rules where the ndarray binops sometimes return NotImplemented
+ * rather than always dispatching to ufuncs.
+ *
+ * Note that these rules are also implemented by ABCArray, so any changes here
+ * should also be reflected there.
  */
 
 NPY_NO_EXPORT int
-needs_right_binop_forward(PyObject *self, PyObject *other,
-                          const char *right_name, int inplace_op)
+needs_binop_forward(PyObject *self, PyObject *other)
 {
+    /* NB: at the C level, the same function is called for both __add__ and
+     * __radd__. The only case where we might return True is if this is
+     * __add__ and the conditions listed in the above comment hold. So what
+     * this means in practice is that we only return 1 if 'self' is an ndarray
+     * or subclass, and 'other' is not an ndarray or subclass.
+     */
+
     if (other == NULL ||
         self == NULL ||
         Py_TYPE(self) == Py_TYPE(other) ||
@@ -135,36 +274,59 @@ needs_right_binop_forward(PyObject *self, PyObject *other,
          */
         return 0;
     }
-    if ((!inplace_op && PyType_IsSubtype(Py_TYPE(other), Py_TYPE(self))) ||
-        !PyArray_Check(self)) {
+
+    if (!PyArray_Check(self)) {
+        /* This is a reversed binop */
+        return 0;
+    }
+    if (PyArray_Check(other)) {
         /*
-         * Bail out if Python would already have called the right-hand
-         * operation.
+         * 'other' is a subclass of ndarray, so either it's already had its
+         * chance or else it is having its chance now.
          */
         return 0;
     }
-    if (has_ufunc_attr(other) &&
-        PyObject_HasAttrString(other, right_name)) {
+    /*
+     * Classes with __numpy_ufunc__ are living in the future, and don't need
+     * a check for the legacy __array_priority__.
+     */
+    if (!has_ufunc_attr(other)) {
+        /*
+         * Catch priority inversion and punt, but only if it's guaranteed
+         * that we were called through m1 and the other arg is not an array
+         * at all. Note that some arrays need to pass through here even
+         * with priorities inverted, for example: float(17) * np.matrix(...)
+         *
+         * See also:
+         * - https://github.com/numpy/numpy/issues/3502
+         * - https://github.com/numpy/numpy/issues/3503
+         *
+         * NB: there's another copy of this code in
+         *    numpy.ma.core.MaskedArray._delegate_binop
+         * which should possibly be updated when this is.
+         */
+        double self_prio = PyArray_GetPriority((PyObject *)self,
+                                               NPY_SCALAR_PRIORITY);
+        double other_prio = PyArray_GetPriority((PyObject *)other,
+                                                NPY_SCALAR_PRIORITY);
+        if (self_prio < other_prio) {
+            return 1;
+        }
+    }
+    if (is_scipy_sparse(other)) {
+        /* Special case grandfathering in scipy.sparse */
         return 1;
     }
-    else {
-        return 0;
-    }
+
+    return 0;
 }
 
-/* In pure-Python, SAME_SLOTS can be replaced by
-   getattr(m1, op_name) is getattr(m2, op_name) */
-#define SAME_SLOTS(m1, m2, slot_name)                                   \
-    (Py_TYPE(m1)->tp_as_number != NULL && Py_TYPE(m2)->tp_as_number != NULL && \
-     Py_TYPE(m1)->tp_as_number->slot_name == Py_TYPE(m2)->tp_as_number->slot_name)
-
-#define GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, left_name, right_name, inplace, slot_name) \
-    do {                                                                          \
-        if (needs_right_binop_forward((PyObject *)m1, m2, right_name, inplace) && \
-                (inplace || !SAME_SLOTS(m1, m2, slot_name))) {                    \
-            Py_INCREF(Py_NotImplemented);                                         \
-            return Py_NotImplemented;                                             \
-        }                                                                         \
+#define GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2) \
+    do {                                                                \
+        if (needs_binop_forward((PyObject *)m1, m2)) {                  \
+            Py_INCREF(Py_NotImplemented);                               \
+            return Py_NotImplemented;                                   \
+        }                                                               \
     } while (0)
 
 
@@ -288,34 +450,16 @@ PyArray_GenericAccumulateFunction(PyArrayObject *m1, PyObject *op, int axis,
 NPY_NO_EXPORT PyObject *
 PyArray_GenericBinaryFunction(PyArrayObject *m1, PyObject *m2, PyObject *op)
 {
+    /*
+     * I suspect that the next few lines are buggy and cause NotImplemented to
+     * be returned at weird times... but if we raise an error here, then
+     * *everything* breaks. (Like, 'arange(10) + 1' and just
+     * 'repr(arange(10))' both blow up with an error here.) Not sure what's
+     * going on with that, but I'll leave it alone for now. - njs, 2015-06-21
+     */
     if (op == NULL) {
         Py_INCREF(Py_NotImplemented);
         return Py_NotImplemented;
-    }
-
-    if (!PyArray_Check(m2) && !has_ufunc_attr(m2)) {
-          /*
-           * Catch priority inversion and punt, but only if it's guaranteed
-           * that we were called through m1 and the other guy is not an array
-           * at all. Note that some arrays need to pass through here even
-           * with priorities inverted, for example: float(17) * np.matrix(...)
-           *
-           * See also:
-           * - https://github.com/numpy/numpy/issues/3502
-           * - https://github.com/numpy/numpy/issues/3503
-           *
-           * NB: there's another copy of this code in
-           *    numpy.ma.core.MaskedArray._delegate_binop
-           * which should possibly be updated when this is.
-           */
-          double m1_prio = PyArray_GetPriority((PyObject *)m1,
-                                               NPY_SCALAR_PRIORITY);
-          double m2_prio = PyArray_GetPriority((PyObject *)m2,
-                                               NPY_SCALAR_PRIORITY);
-          if (m1_prio < m2_prio) {
-              Py_INCREF(Py_NotImplemented);
-              return Py_NotImplemented;
-          }
     }
 
     return PyObject_CallFunctionObjArgs(op, m1, m2, NULL);
@@ -355,21 +499,21 @@ PyArray_GenericInplaceUnaryFunction(PyArrayObject *m1, PyObject *op)
 static PyObject *
 array_add(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__add__", "__radd__", 0, nb_add);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2);
     return PyArray_GenericBinaryFunction(m1, m2, n_ops.add);
 }
 
 static PyObject *
 array_subtract(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__sub__", "__rsub__", 0, nb_subtract);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2);
     return PyArray_GenericBinaryFunction(m1, m2, n_ops.subtract);
 }
 
 static PyObject *
 array_multiply(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__mul__", "__rmul__", 0, nb_multiply);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2);
     return PyArray_GenericBinaryFunction(m1, m2, n_ops.multiply);
 }
 
@@ -377,7 +521,7 @@ array_multiply(PyArrayObject *m1, PyObject *m2)
 static PyObject *
 array_divide(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__div__", "__rdiv__", 0, nb_divide);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2);
     return PyArray_GenericBinaryFunction(m1, m2, n_ops.divide);
 }
 #endif
@@ -385,7 +529,7 @@ array_divide(PyArrayObject *m1, PyObject *m2)
 static PyObject *
 array_remainder(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__mod__", "__rmod__", 0, nb_remainder);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2);
     return PyArray_GenericBinaryFunction(m1, m2, n_ops.remainder);
 }
 
@@ -401,8 +545,7 @@ array_matrix_multiply(PyArrayObject *m1, PyObject *m2)
     if (matmul == NULL) {
         return NULL;
     }
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__matmul__", "__rmatmul__",
-                               0, nb_matrix_multiply);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2);
     return PyArray_GenericBinaryFunction(m1, m2, matmul);
 }
 #endif
@@ -567,7 +710,7 @@ array_power(PyArrayObject *a1, PyObject *o2, PyObject *NPY_UNUSED(modulo))
 {
     /* modulo is ignored! */
     PyObject *value;
-    GIVE_UP_IF_HAS_RIGHT_BINOP(a1, o2, "__pow__", "__rpow__", 0, nb_power);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(a1, o2);
     value = fast_scalar_power(a1, o2, 0);
     if (!value) {
         value = PyArray_GenericBinaryFunction(a1, o2, n_ops.power);
@@ -597,56 +740,53 @@ array_invert(PyArrayObject *m1)
 static PyObject *
 array_left_shift(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__lshift__", "__rlshift__", 0, nb_lshift);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2);
     return PyArray_GenericBinaryFunction(m1, m2, n_ops.left_shift);
 }
 
 static PyObject *
 array_right_shift(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__rshift__", "__rrshift__", 0, nb_rshift);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2);
     return PyArray_GenericBinaryFunction(m1, m2, n_ops.right_shift);
 }
 
 static PyObject *
 array_bitwise_and(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__and__", "__rand__", 0, nb_and);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2);
     return PyArray_GenericBinaryFunction(m1, m2, n_ops.bitwise_and);
 }
 
 static PyObject *
 array_bitwise_or(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__or__", "__ror__", 0, nb_or);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2);
     return PyArray_GenericBinaryFunction(m1, m2, n_ops.bitwise_or);
 }
 
 static PyObject *
 array_bitwise_xor(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__xor__", "__rxor__", 0, nb_xor);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2);
     return PyArray_GenericBinaryFunction(m1, m2, n_ops.bitwise_xor);
 }
 
 static PyObject *
 array_inplace_add(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__iadd__", "__radd__", 1, nb_inplace_add);
     return PyArray_GenericInplaceBinaryFunction(m1, m2, n_ops.add);
 }
 
 static PyObject *
 array_inplace_subtract(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__isub__", "__rsub__", 1, nb_inplace_subtract);
     return PyArray_GenericInplaceBinaryFunction(m1, m2, n_ops.subtract);
 }
 
 static PyObject *
 array_inplace_multiply(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__imul__", "__rmul__", 1, nb_inplace_multiply);
     return PyArray_GenericInplaceBinaryFunction(m1, m2, n_ops.multiply);
 }
 
@@ -654,7 +794,6 @@ array_inplace_multiply(PyArrayObject *m1, PyObject *m2)
 static PyObject *
 array_inplace_divide(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__idiv__", "__rdiv__", 1, nb_inplace_divide);
     return PyArray_GenericInplaceBinaryFunction(m1, m2, n_ops.divide);
 }
 #endif
@@ -662,7 +801,6 @@ array_inplace_divide(PyArrayObject *m1, PyObject *m2)
 static PyObject *
 array_inplace_remainder(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__imod__", "__rmod__", 1, nb_inplace_remainder);
     return PyArray_GenericInplaceBinaryFunction(m1, m2, n_ops.remainder);
 }
 
@@ -671,7 +809,6 @@ array_inplace_power(PyArrayObject *a1, PyObject *o2, PyObject *NPY_UNUSED(modulo
 {
     /* modulo is ignored! */
     PyObject *value;
-    GIVE_UP_IF_HAS_RIGHT_BINOP(a1, o2, "__ipow__", "__rpow__", 1, nb_inplace_power);
     value = fast_scalar_power(a1, o2, 1);
     if (!value) {
         value = PyArray_GenericInplaceBinaryFunction(a1, o2, n_ops.power);
@@ -682,56 +819,50 @@ array_inplace_power(PyArrayObject *a1, PyObject *o2, PyObject *NPY_UNUSED(modulo
 static PyObject *
 array_inplace_left_shift(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__ilshift__", "__rlshift__", 1, nb_inplace_lshift);
     return PyArray_GenericInplaceBinaryFunction(m1, m2, n_ops.left_shift);
 }
 
 static PyObject *
 array_inplace_right_shift(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__irshift__", "__rrshift__", 1, nb_inplace_rshift);
     return PyArray_GenericInplaceBinaryFunction(m1, m2, n_ops.right_shift);
 }
 
 static PyObject *
 array_inplace_bitwise_and(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__iand__", "__rand__", 1, nb_inplace_and);
     return PyArray_GenericInplaceBinaryFunction(m1, m2, n_ops.bitwise_and);
 }
 
 static PyObject *
 array_inplace_bitwise_or(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__ior__", "__ror__", 1, nb_inplace_or);
     return PyArray_GenericInplaceBinaryFunction(m1, m2, n_ops.bitwise_or);
 }
 
 static PyObject *
 array_inplace_bitwise_xor(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__ixor__", "__rxor__", 1, nb_inplace_xor);
     return PyArray_GenericInplaceBinaryFunction(m1, m2, n_ops.bitwise_xor);
 }
 
 static PyObject *
 array_floor_divide(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__floordiv__", "__rfloordiv__", 0, nb_floor_divide);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2);
     return PyArray_GenericBinaryFunction(m1, m2, n_ops.floor_divide);
 }
 
 static PyObject *
 array_true_divide(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__truediv__", "__rtruediv__", 0, nb_true_divide);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(m1, m2);
     return PyArray_GenericBinaryFunction(m1, m2, n_ops.true_divide);
 }
 
 static PyObject *
 array_inplace_floor_divide(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__ifloordiv__", "__rfloordiv__", 1, nb_inplace_floor_divide);
     return PyArray_GenericInplaceBinaryFunction(m1, m2,
                                                 n_ops.floor_divide);
 }
@@ -739,7 +870,6 @@ array_inplace_floor_divide(PyArrayObject *m1, PyObject *m2)
 static PyObject *
 array_inplace_true_divide(PyArrayObject *m1, PyObject *m2)
 {
-    GIVE_UP_IF_HAS_RIGHT_BINOP(m1, m2, "__itruediv__", "__rtruediv__", 1, nb_inplace_true_divide);
     return PyArray_GenericInplaceBinaryFunction(m1, m2,
                                                 n_ops.true_divide);
 }
@@ -772,7 +902,7 @@ static PyObject *
 array_divmod(PyArrayObject *op1, PyObject *op2)
 {
     PyObject *divp, *modp, *result;
-    GIVE_UP_IF_HAS_RIGHT_BINOP(op1, op2, "__divmod__", "__rdivmod__", 0, nb_divmod);
+    GIVE_UP_IF_NEEDS_BINOP_FORWARD(op1, op2);
 
     divp = array_floor_divide(op1, op2);
     if (divp == NULL) {
