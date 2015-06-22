@@ -541,15 +541,17 @@ static void
 /* The general strategy for commutative binary operators is to
  *
  * 1) Convert the types to the common type if both are scalars (0 return)
- * 2) If both are not scalars use ufunc machinery (-2 return)
+ * 2) If either is not a scalar use ufunc machinery (-2 return)
  * 3) If both are scalars but cannot be cast to the right type
- * return NotImplmented (-1 return)
+ *    return NotImplemented (-1 return)
+ * 4) If either has __array_priority > NUMPY_PRIORITY, 
+ *    return NotImplemented (-3 return)
  *
- * 4) Perform the function on the C-type.
- * 5) If an error condition occurred, check to see
+ * 5) Perform the function on the C-type.
+ * 6) If an error condition occurred, check to see
  * what the current error-handling is and handle the error.
  *
- * 6) Construct and return the output scalar.
+ * 7) Construct and return the output scalar.
  */
 
 /**begin repeat
@@ -598,7 +600,7 @@ _@name@_convert_to_ctype(PyObject *a, @type@ *arg1)
         }
     }
     else if (PyArray_GetPriority(a, NPY_PRIORITY) > NPY_PRIORITY) {
-        return -2;
+        return -3;
     }
     else if ((temp = PyArray_ScalarFromObject(a)) != NULL) {
         int retval = _@name@_convert_to_ctype(temp, arg1);
@@ -655,7 +657,7 @@ _@name@_convert_to_ctype(PyObject *a, @type@ *arg1)
         }
     }
     else if (PyArray_GetPriority(a, NPY_PRIORITY) > NPY_PRIORITY) {
-        return -2;
+        return -3;
     }
     else if ((temp = PyArray_ScalarFromObject(a)) != NULL) {
         int retval = _@name@_convert_to_ctype(temp, arg1);
