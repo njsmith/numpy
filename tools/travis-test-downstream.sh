@@ -12,7 +12,7 @@ rm -rf $PWD/miniconda
 bash miniconda.sh -b -p $PWD/miniconda
 export PATH=$PWD/miniconda/bin:$PATH
 
-conda install -y scipy astropy scikit-learn pandas nose
+conda install -q -y scipy astropy scikit-learn pandas nose
 
 if [ "$TEST_DOWNSTREAM" = "this" ]; then
     # Apparently 'conda uninstall' ignores dependencies. Handy for us, but if
@@ -21,7 +21,6 @@ if [ "$TEST_DOWNSTREAM" = "this" ]; then
     pip install -U --force-reinstall --ignore-installed $SRCDIR
 fi
 
-conda info
 pip freeze
 
 python -c 'import numpy; print(numpy.__version__)'
@@ -44,7 +43,7 @@ banner scipy
 python -c "import scipy; scipy.test(extra_argv=['-q'])"
 
 banner astropy
-python -c "import astropy; astropy.test(args=['-q'])"
+python -c "import astropy; astropy.test(args='-q')"
 
 banner sklearn
 nosetests -q sklearn || true
