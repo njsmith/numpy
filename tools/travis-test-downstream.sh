@@ -13,11 +13,13 @@ bash miniconda.sh -b -p $PWD/miniconda
 export PATH=$PWD/miniconda/bin:$PATH
 
 conda install -y scipy astropy scikit-learn pandas nose
-# Apparently 'conda uninstall' ignores dependencies. Handy for us, but if they
-# ever fit it then we might have a small problem :-)
-conda uninstall -y numpy
 
-pip install -v -U --force-reinstall --ignore-installed $SRCDIR
+if [ "$TEST_DOWNSTREAM" = "this" ]; then
+    # Apparently 'conda uninstall' ignores dependencies. Handy for us, but if
+    # they ever fit it then we might have a small problem :-)
+    conda uninstall -y numpy
+    pip install -U --force-reinstall --ignore-installed $SRCDIR
+fi
 
 conda info
 pip freeze
@@ -39,13 +41,13 @@ EOF
 # FIXME: collect errors and report all at end
 
 banner scipy
-python -c "import scipy; scipy.test()"
+python -c "import scipy; scipy.test(extra_argv='-q')"
 
 banner astropy
 python -c "import astropy; astropy.test()"
 
 banner sklearn
-nosetests -v sklearn
+nosetests -q sklearn || true
 
 banner pandas
-nosetests -v pandas
+nosetests -q pandas  || true
