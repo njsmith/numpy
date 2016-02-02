@@ -12,10 +12,10 @@ rm -rf $PWD/miniconda
 bash miniconda.sh -b -p $PWD/miniconda
 export PATH=$PWD/miniconda/bin:$PATH
 
-conda install scipy astropy scikit-learn pandas
+conda install -y scipy astropy scikit-learn pandas
 # Apparently 'conda uninstall' ignores dependencies. Handy for us, but if they
 # ever fit it then we might have a small problem :-)
-conda uninstall numpy
+conda uninstall -y numpy
 
 pip install -v -U --force-reinstall --ignore-installed $SRCDIR
 
