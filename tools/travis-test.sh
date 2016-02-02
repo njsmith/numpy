@@ -2,6 +2,12 @@
 
 set -ex
 
+# Downstream tests use conda and override everything
+if [ -n "$TEST_DOWNSTREAM" ]; then
+    ./tools/travis-test-downstream.sh
+    exit
+fi
+
 # Travis legacy boxes give you 1.5 CPUs, container-based boxes give you 2 CPUs
 export NPY_NUM_BUILD_JOBS=2
 
