@@ -41,10 +41,10 @@ EOF
 # FIXME: collect errors and report all at end
 
 banner scipy
-python -c "import scipy; scipy.test(extra_argv='-q')"
+python -c "import scipy; scipy.test(extra_argv=['-q'])"
 
 banner astropy
-python -c "import astropy; astropy.test()"
+python -c "import astropy; astropy.test(args=['-q'])"
 
 banner sklearn
 nosetests -q sklearn || true
