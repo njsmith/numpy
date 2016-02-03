@@ -59,7 +59,7 @@ banner sklearn
 nosetests -q sklearn 2>&1 | python $TOOLS_DIR/compress-warnings.py || true
 
 banner pandas
-nosetests -q pandas 2>&1 | python $TOOLS_DIR/compress-warnings.py || true
+nosetests pandas 2>&1 | python $TOOLS_DIR/compress-warnings.py || true
 
 banner statsmodels
 python -c "import statsmodels.api as sm; sm.test(verbose=0)" 2>&1 | python $TOOLS_DIR/compress-warnings.py
