@@ -85,28 +85,33 @@ while True:
         last_output = time.time()
         outfile.write(line)
 
-if warning_counts:
-    # Collapse clusters: big clusters "win" and lay claim to their contents
-    all_warnings = set(warning_counts)
-    cluster_assignments = {}
-    clusters = sorted(maybe_clusters.items(),
-                      key=lambda item: len(item[1]),
-                      reverse=True)
-    for g_message, cluster in clusters:
-        # Don't try to generify messages that are in a cluster by themself
-        if len(cluster) == 1:
-            g_message = list(cluster)[0]
-        for message in cluster:
-            cluster_assignments.setdefault(message, g_message)
-    #import pdb; pdb.set_trace()
-    cluster_counts = defaultdict(int)
-    cluster_variants = defaultdict(int)
-    for message, g_message in cluster_assignments.items():
-        cluster_counts[g_message] += warning_counts[message]
-        cluster_variants[g_message] += 1
+outfile.write("<Warning counts>\n")
+outfile.write(repr(warning_counts))
+outfile.write("</ Warning counts>\n")
 
-    outfile.write("\n")
-    outfile.write("Warning summary:\n")
+# Collapse clusters: big clusters "win" and lay claim to their contents
+all_warnings = set(warning_counts)
+cluster_assignments = {}
+clusters = sorted(maybe_clusters.items(),
+                  key=lambda item: len(item[1]),
+                  reverse=True)
+for g_message, cluster in clusters:
+    # Don't try to generify messages that are in a cluster by themself
+    if len(cluster) == 1:
+        g_message = list(cluster)[0]
+    for message in cluster:
+        cluster_assignments.setdefault(message, g_message)
+#import pdb; pdb.set_trace()
+cluster_counts = defaultdict(int)
+cluster_variants = defaultdict(int)
+for message, g_message in cluster_assignments.items():
+    cluster_counts[g_message] += warning_counts[message]
+    cluster_variants[g_message] += 1
+
+outfile.write("\n")
+outfile.write("Warning summary:\n")
+
+if cluster_counts:
     max_count = float(max(cluster_counts.values()))
     for g_message in sorted(cluster_counts):
         c = cluster_counts[g_message]
@@ -114,5 +119,7 @@ if warning_counts:
         outfile.write("    Seen %s times (%s variants)\n"
                      % (c, cluster_variants[g_message]))
         outfile.write("  " + "*" * int(round(c / max_count * 78)) + "\n")
+else:
+    outfile.write("  <no warnings seen>\n")
 
-outfile.close()
+outfile.flush()
