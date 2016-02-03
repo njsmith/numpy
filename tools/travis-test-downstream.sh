@@ -70,7 +70,7 @@ mask_boring_changes() {
     # We don't care about line number changes in exceptions,
     # and we don't care about the cute '***' bar graphs that
     # compress-warnings.py makes
-    sed -Ee "/File .*, line/ s/line [0-9]+/line NNN/g" $1 | grep -Ev '^\*+$'
+    sed -Ee "/File .*, line/ s/line [0-9]+/line NNN/g" -e 's/^  \*+$/  /' $1
 }
 
 ################################################################
@@ -91,3 +91,5 @@ do_test new.log
 banner "CHANGES"
 # We don't care about changes in line numbers in exception tracebacks
 diff -u <(mask_boring_changes old.log) <(mask_boring_changes new.log)
+
+exit 0
