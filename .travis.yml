@@ -74,6 +74,10 @@ matrix:
     - python: 3.5
       env:
        - TEST_DOWNSTREAM=astropy
+      addons:
+        apt:
+          packages:
+            - strace
     - python: 3.5
       env:
        - TEST_DOWNSTREAM=scikit-learn
