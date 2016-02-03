@@ -67,12 +67,10 @@ do_test() {
 }
 
 mask_boring_changes() {
-    <$1 \
-     # We don't care about line number changes in exceptions
-     sed -e "/File .*, line/ s/[0-9]+/NNN/g" \
-     # We don't care about the cute '***' bar graphs that compress-warnings.py
-     # makes
-     grep -Ev '^\*+$'
+    # We don't care about line number changes in exceptions,
+    # and we don't care about the cute '***' bar graphs that
+    # compress-warnings.py makes
+    sed -Ee "/File .*, line/ s/line [0-9]+/line NNN/g" $1 | grep -Ev '^\*+$'
 }
 
 ################################################################
