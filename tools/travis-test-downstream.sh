@@ -15,7 +15,7 @@ rm -rf $PWD/miniconda
 bash miniconda.sh -b -p $PWD/miniconda
 export PATH=$PWD/miniconda/bin:$PATH
 
-conda install -q -y scipy matplotlib astropy scikit-learn pandas statsmodels nose
+conda install -q -y scipy astropy scikit-learn pandas statsmodels nose
 
 if [ "$TEST_DOWNSTREAM" = "this" ]; then
     # Apparently 'conda uninstall' ignores dependencies. Handy for us, but if
@@ -45,8 +45,12 @@ set +e
 banner scipy
 python -c "import scipy; scipy.test(verbose=0)" 2>&1 | python $TOOLS_DIR/compress-warnings.py
 
-banner matplotlib
-python -c "import matplotlib; matplotlib.test(verbosity=0)" 2>&1 | python $TOOLS_DIR/compress-warnings.py
+# - testing matplotlib doesn't work, because the regular package doesn't
+#   include the test data
+# - installing matplotlib causes problems for other packages, because they try
+#   to use it and then blow up trying to find the X server
+# banner matplotlib
+# python -c "import matplotlib; matplotlib.test(verbosity=0)" 2>&1 | python $TOOLS_DIR/compress-warnings.py
 
 banner astropy
 python -c "import astropy; astropy.test(args='-q')" 2>&1 | python $TOOLS_DIR/compress-warnings.py
