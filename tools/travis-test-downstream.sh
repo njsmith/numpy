@@ -40,22 +40,22 @@ banner() {
 EOF
 }
 
-# FIXME: collect errors and report all at end
+set +e
 
 banner scipy
-python -c "import scipy; scipy.test(verbose=0)" | python $TOOLS_DIR/compress-warnings.py
+python -c "import scipy; scipy.test(verbose=0)" 2>&1 | python $TOOLS_DIR/compress-warnings.py
 
 banner matplotlib
-python -c "import matplotlib; matplotlib.test(verbosity=0)" | python $TOOLS_DIR/compress-warnings.py
+python -c "import matplotlib; matplotlib.test(verbosity=0)" 2>&1 | python $TOOLS_DIR/compress-warnings.py
 
 banner astropy
-python -c "import astropy; astropy.test(args='-q')" | python $TOOLS_DIR/compress-warnings.py
+python -c "import astropy; astropy.test(args='-q')" 2>&1 | python $TOOLS_DIR/compress-warnings.py
 
 banner sklearn
-nosetests -q sklearn | python $TOOLS_DIR/compress-warnings.py || true
+nosetests -q sklearn 2>&1 | python $TOOLS_DIR/compress-warnings.py || true
 
 banner pandas
-nosetests -q pandas | python $TOOLS_DIR/compress-warnings.py || true
+nosetests -q pandas 2>&1 | python $TOOLS_DIR/compress-warnings.py || true
 
 banner statsmodels
-python -c "import statsmodels.api as m; sm.test(verbose=0)" | python $TOOLS_DIR/compress-warnings.py
+python -c "import statsmodels.api as m; sm.test(verbose=0)" 2>&1 | python $TOOLS_DIR/compress-warnings.py
