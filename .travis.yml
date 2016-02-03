@@ -70,10 +70,22 @@ matrix:
     #    - USE_ASV=1
     - python: 3.5
       env:
-       - TEST_DOWNSTREAM=this
+       - TEST_DOWNSTREAM=scipy
     - python: 3.5
       env:
-       - TEST_DOWNSTREAM=stable
+       - TEST_DOWNSTREAM=astropy
+    - python: 3.5
+      env:
+       - TEST_DOWNSTREAM=scikit-learn
+    - python: 3.5
+      env:
+       - TEST_DOWNSTREAM=pandas
+    - python: 3.5
+      env:
+       - TEST_DOWNSTREAM=statsmodels
+    # - python: 3.5
+    #   env:
+    #    - TEST_DOWNSTREAM=matplotlib
 before_install:
   - uname -a
   - free -m
