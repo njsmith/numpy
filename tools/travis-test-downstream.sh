@@ -21,7 +21,7 @@ if [ "$TEST_DOWNSTREAM" = "this" ]; then
     # Apparently 'conda uninstall' ignores dependencies. Handy for us, but if
     # they ever fit it then this will break... :-)
     conda uninstall -q -y numpy
-    pip install -q -U --force-reinstall --ignore-installed $SRCDIR
+    pip install -q -U --force-reinstall --ignore-installed $NUMPY_SRC
 fi
 
 pip freeze
