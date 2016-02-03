@@ -1,11 +1,17 @@
 #!/usr/bin/env python
 
+# This script has gotten a bit out of hand, but the basic idea is simple: it
+# acts as a filter that copies stdin to stdout, and filters out anything that
+# looks like a Python warning. Then at the end, it prints out a summary of all
+# the warnings.
+
 import sys
 import os
 from collections import defaultdict
 import re
 import time
 import threading
+import signal
 
 if sys.version_info[0] < 3:
     # unbuffered
@@ -17,6 +23,7 @@ else:
     outfile = os.fdopen(1, "w", buffering=1)
 
 number_re = re.compile("-?[0-9]+")
+# Yields candidate more-generic versions of a warning message
 def generify(message):
     yield message
     yield number_re.sub("NNN", message)
@@ -32,7 +39,7 @@ warn_re = re.compile("(?P<place>.*:[0-9]+): "
                      "(?P<message>.*Warning: .*)")
 
 last_output = time.time()
-# Travis timeout is 10 minutes; let's print something every 5
+# Travis times out after 10 minutes of silence; let's print something every 5
 MAX_SILENCE = 5 * 60
 
 def ping_travis():
@@ -44,7 +51,8 @@ def ping_travis():
             outfile.write("Still working...\n")
         else:
             time.sleep(MAX_SILENCE - silence)
-ping_travis_thread = threading.Thread(target=ping_travis, daemon=True)
+ping_travis_thread = threading.Thread(target=ping_travis)
+ping_travis_thread.daemon = True
 ping_travis_thread.start()
 
 while True:
