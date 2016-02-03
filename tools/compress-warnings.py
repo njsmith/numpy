@@ -85,9 +85,9 @@ while True:
         last_output = time.time()
         outfile.write(line)
 
-outfile.write("<Warning counts>\n")
-outfile.write(repr(warning_counts))
-outfile.write("</ Warning counts>\n")
+# outfile.write("<Warning counts>\n")
+# outfile.write(repr(warning_counts))
+# outfile.write("</ Warning counts>\n")
 
 # Collapse clusters: big clusters "win" and lay claim to their contents
 all_warnings = set(warning_counts)
