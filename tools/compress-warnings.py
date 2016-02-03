@@ -4,6 +4,8 @@ import sys
 import os
 from collections import defaultdict
 import re
+import time
+import threading
 
 if sys.version_info[0] < 3:
     # unbuffered
@@ -28,6 +30,22 @@ warning_counts = defaultdict(int)
 #   for _ in range(n_resampling)):
 warn_re = re.compile("(?P<place>.*:[0-9]+): "
                      "(?P<message>.*Warning: .*)")
+
+last_output = time.time()
+# Travis timeout is 10 minutes; let's print something every 5
+MAX_SILENCE = 5 * 60
+
+def ping_travis():
+    global last_output
+    while True:
+        silence = time.time() - last_output
+        if silence > MAX_SILENCE:
+            last_output = time.time()
+            outfile.write("Still working...\n")
+        else:
+            time.sleep(MAX_SILENCE - silence)
+ping_travis_thread = threading.Thread(target=ping_travis, daemon=True)
+ping_travis_thread.start()
 
 while True:
     line = infile.readline()
@@ -56,6 +74,7 @@ while True:
         for generic in generify(message):
             maybe_clusters[generic].add(message)
     else:
+        last_output = time.time()
         outfile.write(line)
 
 if warning_counts:
