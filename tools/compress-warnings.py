@@ -5,18 +5,14 @@ import os
 from collections import defaultdict
 import re
 
-if len(sys.argv) == 2:
-    infile = open(sys.argv[1], "r", buffering=1)
-    outfile = sys.stdout
+if sys.version_info[0] < 3:
+    # unbuffered
+    infile = os.fdopen(0, "r", 0)
+    outfile = os.fdopen(1, "w", 0)
 else:
-    if sys.version_info[0] < 3:
-        # unbuffered
-        infile = os.fdopen(0, "r", 0)
-        outfile = os.fdopen(1, "w", 0)
-    else:
-        # line buffered
-        infile = os.fdopen(0, "r", buffering=1)
-        outfile = os.fdopen(1, "w", buffering=1)
+    # line buffered
+    infile = os.fdopen(0, "r", buffering=1)
+    outfile = os.fdopen(1, "w", buffering=1)
 
 number_re = re.compile("-?[0-9]+")
 def generify(message):
