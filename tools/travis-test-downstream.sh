@@ -63,7 +63,8 @@ do_test_internal() {
 }
 
 do_test() {
-    do_test_internal 2>&1 | python $TOOLS_DIR/compress-warnings.py | tee $1
+    do_test_internal 2>&1 | strace -o cw.log python $TOOLS_DIR/compress-warnings.py | tee $1
+    cat cw.log
 }
 
 mask_boring_changes() {
