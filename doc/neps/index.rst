@@ -18,6 +18,15 @@ Meta-NEPs (NEPs about NEPs or Processes)
    nep-template
 
 
+Draft NEPS, under discussion
+----------------------------
+
+.. toctree::
+   :maxdepth: 1
+
+   nep-0015-merge-multiarray-umath
+
+
 Accepted NEPs, implementation in progress
 -----------------------------------------
 
