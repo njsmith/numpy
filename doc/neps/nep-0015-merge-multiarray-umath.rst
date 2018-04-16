@@ -82,8 +82,12 @@ This NEP proposes three changes:
    ``numpy/core/src/umath/*.c`` together into a single extension
    module.
 
+   a. The c-extension (shared object) will become `numpy.core._multiarray`
+   b. The current namespace objects will be preserved in
+      `numpy/core/multiarray.py` and `numpy/core/umath.py`
+
 2. Instead of ``set_numeric_ops``, we should use some new, private API
-   to set up ``ndarray.__add__`` and friends.
+   to set up ``ndarray.__add__`` and friends before `PyType_Ready`:
 
 3. We should deprecate, and eventually remove, ``np.set_numeric_ops``.
 
